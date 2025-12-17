@@ -4,6 +4,20 @@ __pycache__/
 
 # Python packaging artifacts
 *.egg-info/
+dist/
+build/
 
-# Index files
-data_repo/
+# Environment variables
+.env
+
+# Vector Database
+db/
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# IDE settings
+.vscode/
+.idea/
