@@ -2,9 +2,11 @@ from tree_sitter import Language, Parser, Query, QueryCursor
 import tree_sitter_python
 import tree_sitter_c
 import tree_sitter_cpp
+from utils.logger import logger
 
 class CodeParser:
     def __init__(self):
+        logger.info("Initializing code parser with Tree-sitter")
         self.parsers = {}
         self.languages = {}
         self._initialize_parsers()
@@ -72,7 +74,7 @@ class CodeParser:
         try:
             query = Query(ts_language, query_scm)
         except Exception as e:
-            print(f"Query error for {language}: {e}")
+            logger.error(f"Query creation failed for {language}: {type(e).__name__}: {e}")
             return []
 
         cursor = QueryCursor(query)

@@ -1,23 +1,51 @@
 # Python bytecode cache
 __pycache__/
 *.py[cod]
+*$py.class
 
 # Python packaging artifacts
 *.egg-info/
 dist/
 build/
+*.egg
 
-# Environment variables
+# Environment variables (CRITICAL - never commit!)
 .env
+.env.local
+.env.*.local
 
 # Vector Database
 db/
+*.sqlite3
+
+# Logs
+logs/
+*.log
 
 # Virtual Environment
 .venv/
 venv/
 env/
+ENV/
 
 # IDE settings
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+htmlcov/
+.coverage
+.coverage.*
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
