@@ -1,7 +1,4 @@
 from tree_sitter import Language, Parser, Query, QueryCursor
-import tree_sitter_python
-import tree_sitter_c
-import tree_sitter_cpp
 from utils.logger import logger
 
 class CodeParser:
@@ -12,20 +9,32 @@ class CodeParser:
         self._initialize_parsers()
 
     def _initialize_parsers(self):
+        # Import language modules dynamically to handle different tree-sitter versions
+        try:
+            import tree_sitter_python as ts_python
+            import tree_sitter_c as ts_c
+            import tree_sitter_cpp as ts_cpp
+        except ImportError as e:
+            logger.error(f"Failed to import tree-sitter language modules: {e}")
+            raise ImportError(
+                "tree-sitter language modules not installed. "
+                "Run: pip install tree-sitter-python tree-sitter-c tree-sitter-cpp"
+            )
+        
         # Python
-        py_lang = Language(tree_sitter_python.language())
+        py_lang = Language(ts_python.language())
         py_parser = Parser(py_lang)
         self.parsers['python'] = py_parser
         self.languages['python'] = py_lang
         
         # C
-        c_lang = Language(tree_sitter_c.language())
+        c_lang = Language(ts_c.language())
         c_parser = Parser(c_lang)
         self.parsers['c'] = c_parser
         self.languages['c'] = c_lang
 
         # C++
-        cpp_lang = Language(tree_sitter_cpp.language())
+        cpp_lang = Language(ts_cpp.language())
         cpp_parser = Parser(cpp_lang)
         self.parsers['cpp'] = cpp_parser
         self.languages['cpp'] = cpp_lang
