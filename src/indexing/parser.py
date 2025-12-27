@@ -1,139 +1,58 @@
-from tree_sitter import Language, Parser, Query, QueryCursor
+import os
+from typing import List
+from tree_sitter import Language, Parser
 from utils.logger import logger
+from .schema import CodeNode
+from .parsers.python_parser import PythonParser
+from .parsers.cpp_parser import CppParser
 
 class CodeParser:
     def __init__(self):
-        logger.info("Initializing code parser with Tree-sitter")
-        self.parsers = {}
-        self.languages = {}
+        logger.info("Initializing CodeParser with language-specific backends")
         self._initialize_parsers()
 
     def _initialize_parsers(self):
-        # Import language modules dynamically to handle different tree-sitter versions
         try:
             import tree_sitter_python as ts_python
             import tree_sitter_c as ts_c
             import tree_sitter_cpp as ts_cpp
         except ImportError as e:
-            logger.error(f"Failed to import tree-sitter language modules: {e}")
-            raise ImportError(
-                "tree-sitter language modules not installed. "
-                "Run: pip install tree-sitter-python tree-sitter-c tree-sitter-cpp"
-            )
-        
-        # Python
+            logger.error(f"Tree-sitter languages missing: {e}")
+            raise ImportError("Please install: pip install tree-sitter-python tree-sitter-c tree-sitter-cpp")
+
+        # Initialize Python Parser
         py_lang = Language(ts_python.language())
         py_parser = Parser(py_lang)
-        self.parsers['python'] = py_parser
-        self.languages['python'] = py_lang
+        self.python_parser = PythonParser(py_parser, py_lang)
         
-        # C
+        # Initialize C Parser
         c_lang = Language(ts_c.language())
         c_parser = Parser(c_lang)
-        self.parsers['c'] = c_parser
-        self.languages['c'] = c_lang
+        self.c_parser = CppParser(c_parser, c_lang, 'c')
 
-        # C++
+        # Initialize C++ Parser
         cpp_lang = Language(ts_cpp.language())
         cpp_parser = Parser(cpp_lang)
-        self.parsers['cpp'] = cpp_parser
-        self.languages['cpp'] = cpp_lang
+        self.cpp_parser = CppParser(cpp_parser, cpp_lang, 'cpp')
 
-    def parse(self, code: str, language: str):
-        """
-        Parse code string into an AST.
-        """
-        if language not in self.parsers:
-            raise ValueError(f"Language {language} not supported.")
+    def parse_file(self, file_path: str, code: str) -> List[CodeNode]:
+        """Delegate parsing to the appropriate language parser."""
+        ext = os.path.splitext(file_path)[1].lower()
         
-        tree = self.parsers[language].parse(bytes(code, "utf8"))
-        return tree
-
-    def extract_definitions(self, code: str, language: str):
-        """
-        Extract function and class definitions using Tree-sitter queries.
-        """
-        tree = self.parse(code, language)
-        root_node = tree.root_node
-        
-        definitions = []
-        
-        if language == 'python':
-            query_scm = """
-            (function_definition) @function
-            (class_definition) @class
-            """
-        elif language == 'c':
-            query_scm = """
-            (function_definition) @function
-            (struct_specifier) @struct
-            """
-        elif language == 'cpp':
-            query_scm = """
-            (function_definition) @function
-            (class_specifier) @class
-            (struct_specifier) @struct
-            """
+        if ext == '.py':
+            return self.python_parser.parse(code, file_path)
+        elif ext in ['.c', '.h']:
+            return self.c_parser.parse(code, file_path)
+        elif ext in ['.cpp', '.hpp', '.cc', '.cxx']:
+            return self.cpp_parser.parse(code, file_path)
         else:
+            logger.debug(f"Unsupported file extension: {ext}")
             return []
 
-        # Get the language object to create the query
-        ts_language = self.languages[language]
-        
-        try:
-            query = Query(ts_language, query_scm)
-        except Exception as e:
-            logger.error(f"Query creation failed for {language}: {type(e).__name__}: {e}")
-            return []
-
-        cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
-
-        # Flatten captures dict to list of (node, name)
-        all_captures = []
-        for name, nodes in captures.items():
-            for node in nodes:
-                all_captures.append((node, name))
-        
-        # Sort captures by start byte to handle them in order
-        sorted_captures = sorted(all_captures, key=lambda x: x[0].start_byte)
-
-        for node, name in sorted_captures:
-            definitions.append({
-                'type': name,
-                'name': self._get_node_name(node, code),
-                'start_line': node.start_point[0],
-                'end_line': node.end_point[0],
-                'content': code[node.start_byte:node.end_byte]
-            })
-            
-        return definitions
-
-    def _get_node_name(self, node, code: str) -> str:
-        # Helper to extract name identifier from a node
-        child_by_field = node.child_by_field_name('name')
-        if child_by_field:
-            return code[child_by_field.start_byte:child_by_field.end_byte]
-        
-        # For C/C++ functions, the declarator contains the function name
-        declarator = node.child_by_field_name('declarator')
-        if declarator:
-            # The declarator might itself have a declarator (pointer declarations)
-            while declarator.child_by_field_name('declarator'):
-                declarator = declarator.child_by_field_name('declarator')
-            # Now get the identifier from this declarator
-            if declarator.type == 'identifier':
-                return code[declarator.start_byte:declarator.end_byte]
-            for child in declarator.children:
-                if child.type == 'identifier':
-                    return code[child.start_byte:child.end_byte]
-        
-        # Fallback for complex cases
-        for child in node.children:
-            if child.type in ['identifier', 'type_identifier', 'field_identifier']:
-                 return code[child.start_byte:child.end_byte]
-            # Handle C++ qualified names (Namespace::Class)
-            if child.type == 'qualified_identifier':
-                return code[child.start_byte:child.end_byte]
-                
-        return "anonymous"
+    # Compatibility method for existing indexer.py (if needed)
+    # Once indexer.py is updated, this can be removed.
+    def extract_definitions(self, code: str, language: str) -> List[dict]:
+        """Legacy support wrapper. Deprecated."""
+        # This is just for backward compatibility during migration
+        # In the new architecture, use parse_file() instead.
+        return []
