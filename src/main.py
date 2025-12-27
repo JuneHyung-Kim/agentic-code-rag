@@ -6,7 +6,6 @@ import argparse
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import config
-from tools.filesystem import FileSystemTools
 from indexing.indexer import CodeIndexer
 from indexing.vector_store import VectorStore
 from agent.core import CodeAgent

@@ -49,8 +49,9 @@ This guide is designed for developers who want to understand, modify, or extend 
         ┌────▼────┐   ┌────▼────────┐
         │ Parser  │   │  AI Provider │
         │(Tree-   │   │ (OpenAI/    │
-        │ sitter) │   │  Gemini)    │
-        └─────────┘   └─────────────┘
+        │ sitter) │   │  Gemini/    │
+        └─────────┘   │  Ollama)    │
+                      └─────────────┘
 ```
 
 ### Component Responsibilities
@@ -78,7 +79,7 @@ project-root/
 │   │
 │   ├── agent/                    # AI Agent logic
 │   │   ├── __init__.py
-│   │   └── core.py               # CodeAgent class (OpenAI/Gemini)
+│   │   └── core.py               # CodeAgent class (OpenAI/Gemini/Ollama)
 │   │
 │   ├── indexing/                 # Code indexing pipeline
 │   │   ├── __init__.py
@@ -88,10 +89,12 @@ project-root/
 │   │
 │   ├── tools/                    # Agent tools
 │   │   ├── __init__.py
-│   │   ├── search_tool.py        # SearchTool for code search
-│   │   └── filesystem.py         # File system utilities
+│   │   └── search_tool.py        # SearchTool for code search
 │   │
-│   └── utils/                    # Shared utilities (future)
+│   └── utils/                    # Shared utilities
+│       ├── __init__.py
+│       ├── logger.py             # Logging configuration
+│       └── ollama_embedding.py   # Custom Ollama embeddings
 │
 ├── docs/                         # Documentation
 │   ├── USER_GUIDE.md
@@ -102,8 +105,7 @@ project-root/
 │   └── chroma.sqlite3
 │
 ├── .env.example                  # Environment variable template
-├── requirements.txt              # Python dependencies
-├── pyproject.toml               # Project metadata
+├── pyproject.toml               # Project metadata and dependencies
 └── README.md                     # Project overview
 ```
 
@@ -119,20 +121,26 @@ project-root/
 - Loads environment variables from `.env`
 - Validates API keys based on provider
 - Single source of truth for all settings
+- Support for split providers (chat vs embedding)
 
 **Code Structure:**
 ```python
 class AgentConfig:
     def __init__(self):
-        # Load from environment
+        # API Keys
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
-        self.model_provider = os.getenv("MODEL_PROVIDER", "openai")
-        self.model_name = os.getenv("MODEL_NAME", "gpt-4o")
         
-    @property
-    def is_valid(self) -> bool:
-        # Validation logic
+        # Configuration
+        self.embedding_provider = os.getenv("EMBEDDING_PROVIDER", "default")
+        self.chat_provider = os.getenv("CHAT_PROVIDER", "gemini")
+        self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+    def validate_chat_config(self) -> None:
+        # Validation logic for chat provider
+
+    def validate_embedding_config(self) -> None:
+        # Validation logic for embedding provider
 ```
 
 **Design Decision**: Singleton pattern via module-level `config` instance
@@ -247,7 +255,7 @@ VectorStore
     ↓
 ChromaDB (Persistent)
     ↓
-Embedding Function (OpenAI, Gemini, or Default)
+Embedding Function (OpenAI, Gemini, Ollama, or Default)
     ↓
 SQLite Database (./db/chroma.sqlite3)
 ```
@@ -258,6 +266,7 @@ SQLite Database (./db/chroma.sqlite3)
 |----------|-------|------------|----------|
 | OpenAI | `text-embedding-3-small` | 1536 | High quality, paid |
 | Gemini | `embedding-001` | 768 | Free tier available |
+| Ollama | `mxbai-embed-large` | 1024 | Free, private, local |
 | Default | Sentence Transformers | 384 | Offline, no API key |
 
 **Key Operations:**
@@ -309,10 +318,10 @@ results = vector_store.query(
 ```
 CodeAgent
     ↓
-┌──────────────┬──────────────┐
-│              │              │
-OpenAI API     Gemini API     SearchTool
-(Function      (Function      (Vector Search)
+┌──────────────┬──────────────┬──────────────┐
+│              │              │              │
+OpenAI API     Gemini API     Ollama (Via    SearchTool
+(Function      (Function      OpenAI API)    (Vector Search)
 Calling)       Calling)
 ```
 
@@ -338,11 +347,11 @@ Final Response to User
 
 **Provider-Specific Implementation:**
 
-**OpenAI:**
+**OpenAI / Ollama:**
 ```python
 # Send message with tools
 response = client.chat.completions.create(
-    model="gpt-4o",
+    model="gpt-4o",  # or llama3.2
     messages=self.messages,
     tools=[search_tool_definition],
     tool_choice="auto"
@@ -372,7 +381,7 @@ response = chat.send_message(user_input)
 **Design Decisions:**
 - **Provider abstraction**: Switch providers without changing interface
 - **Automatic tool calling**: Gemini handles tool execution internally
-- **Message history**: OpenAI requires manual management
+- **Message history**: OpenAI/Ollama require manual management
 - **System prompts**: Guides the AI to reference code and be specific
 
 ### 6. Search Tool (`src/tools/search_tool.py`)
@@ -416,7 +425,7 @@ def search_codebase(query: str, n_results: int = 5) -> str:
 **Design Decisions:**
 - **String return type**: Easier for AI to parse
 - **Formatted output**: Consistent structure for AI consumption
-- **Provider-agnostic**: Works with both OpenAI and Gemini
+- **Provider-agnostic**: Works with both OpenAI, Gemini and Ollama
 
 ---
 
@@ -471,7 +480,7 @@ main.py: start_chat()
     ↓
 CodeAgent.__init__()
     ↓
-Initialize provider (OpenAI or Gemini)
+Initialize provider (OpenAI, Gemini, or Ollama)
 Load SearchTool
     ↓
 User Input Loop:
@@ -606,10 +615,7 @@ To add a file reading tool:
 ### Installing Development Dependencies
 
 ```bash
-pip install -r requirements.txt
-
-# Optional: Install dev tools
-pip install pytest black mypy flake8
+pip install -e ".[dev]"
 ```
 
 ### Code Formatting
@@ -719,6 +725,7 @@ tests/
 - [ChromaDB Documentation](https://docs.trychroma.com/)
 - [OpenAI Function Calling Guide](https://platform.openai.com/docs/guides/function-calling)
 - [Gemini Function Calling Guide](https://ai.google.dev/docs/function_calling)
+- [Ollama API Documentation](https://github.com/ollama/ollama/blob/main/docs/api.md)
 
 ---
 

@@ -81,8 +81,6 @@ class VectorStore:
         
         else:
             raise ValueError(f"Unknown EMBEDDING_PROVIDER: {provider}")
-            else:
-                raise
 
     def add_documents(self, documents: List[str], metadatas: List[Dict[str, Any]], ids: List[str]):
         if not documents:

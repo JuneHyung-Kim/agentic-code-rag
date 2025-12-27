@@ -24,7 +24,7 @@ This is an AI-powered code assistant designed to help you understand and navigat
 ✨ **Smart Code Indexing**: Automatically parses C, C++, and Python code to understand structure  
 🔍 **Semantic Search**: Find relevant code using natural language queries  
 💬 **AI Chat Interface**: Ask questions and get intelligent responses about your codebase  
-🔌 **Multi-Provider Support**: Works with OpenAI (GPT-4o) or Google Gemini
+🔌 **Multi-Provider Support**: Works with OpenAI, Google Gemini, and local Ollama models
 
 ---
 
@@ -34,7 +34,7 @@ This is an AI-powered code assistant designed to help you understand and navigat
 
 - Python 3.9 or higher
 - Git (for cloning the repository)
-- OpenAI API key **OR** Google Gemini API key
+- API Key (OpenAI or Gemini) OR local Ollama setup
 
 ### Step 1: Clone the Repository
 
@@ -60,7 +60,7 @@ source .venv/bin/activate
 ### Step 3: Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Step 4: Configure API Keys
@@ -70,22 +70,7 @@ pip install -r requirements.txt
    cp .env.example .env
    ```
 
-2. Edit `.env` and add your API key:
-   ```ini
-   # For Google Gemini (Recommended for free tier)
-   MODEL_PROVIDER=gemini
-   GEMINI_API_KEY=your_gemini_api_key_here
-   MODEL_NAME=gemini-1.5-flash
-   
-   # OR for OpenAI
-   # MODEL_PROVIDER=openai
-   # OPENAI_API_KEY=sk-your_openai_key_here
-   # MODEL_NAME=gpt-4o
-   ```
-
-**Getting API Keys:**
-- **Gemini**: Visit [Google AI Studio](https://ai.google.dev/) and create a free API key
-- **OpenAI**: Visit [OpenAI Platform](https://platform.openai.com/api-keys) and create an API key
+2. Edit `.env` to configure your models. See [Configuration](#configuration) for details.
 
 ---
 
@@ -290,38 +275,55 @@ You: Find race condition risks in the scheduler
 
 ## Configuration
 
+The agent supports independent configuration for embedding (search) and chat (conversations). You can mix and match providers.
+
 ### Environment Variables
 
 All configuration is in the `.env` file:
 
 ```ini
-# Provider: openai or gemini
-MODEL_PROVIDER=gemini
+# 1. Choose Embedding Provider (for search)
+# Options: openai, gemini, ollama, default (Sentence Transformers)
+EMBEDDING_PROVIDER=default
+EMBEDDING_MODEL=text-embedding-3-small  # for openai
+# EMBEDDING_MODEL=mxbai-embed-large     # for ollama
 
-# API Keys (set only the one you're using)
+# 2. Choose Chat Provider (for conversation)
+# Options: openai, gemini, ollama
+CHAT_PROVIDER=gemini
+CHAT_MODEL=gemini-1.5-flash
+
+# 3. API Keys (set only the ones you're using)
 GEMINI_API_KEY=your_key_here
 OPENAI_API_KEY=your_key_here
 
-# Model selection
-MODEL_NAME=gemini-1.5-flash  # or gpt-4o
+# 4. Local Configuration (for Ollama)
+OLLAMA_BASE_URL=http://localhost:11434
 
-# Project root (default: current directory)
+# 5. Project Settings
 PROJECT_ROOT=./
 ```
 
-### Choosing a Provider
+### Choosing Providers
 
-**Google Gemini** (Recommended for most users)
-- ✅ Free tier available
-- ✅ Fast responses
-- ✅ Good for code understanding
-- Model: `gemini-1.5-flash` or `gemini-1.5-pro`
+#### 1. All Local (Free, Private)
+Uses Ollama for both embeddings and chat. Best for privacy and cost, but requires a capable local machine.
+- `EMBEDDING_PROVIDER=ollama`
+- `CHAT_PROVIDER=ollama`
+- Models: `mxbai-embed-large`, `qwen2.5`
 
-**OpenAI GPT-4**
-- ✅ High quality responses
-- ✅ Better at complex reasoning
-- ❌ Requires paid API access
-- Model: `gpt-4o` or `gpt-4-turbo`
+#### 2. All Cloud (Best Quality)
+Uses OpenAI for both. Best performance but costs money.
+- `EMBEDDING_PROVIDER=openai`
+- `CHAT_PROVIDER=openai`
+- Models: `text-embedding-3-small`, `gpt-4o`
+
+#### 3. Hybrid (Cost Effective)
+Uses local/free embeddings and a cost-effective chat model.
+- `EMBEDDING_PROVIDER=default` (local Sentence Transformers)
+- `CHAT_PROVIDER=gemini` (Free tier available)
+
+See [Model Configuration](./MODEL_CONFIGURATION.md) for detailed examples.
 
 ### Database Location
 
@@ -341,7 +343,7 @@ The vector database is stored in `./db/` by default. To change:
 **Solution:**
 1. Make sure `.env` file exists in the project root
 2. Check that the API key is correctly set
-3. Verify `MODEL_PROVIDER` matches your API key (gemini or openai)
+3. Verify your `CHAT_PROVIDER` and `EMBEDDING_PROVIDER` settings match your keys.
 
 #### Issue: "No results found" when searching
 
@@ -379,6 +381,7 @@ python src/main.py index /project/src/subsystem2
 **Possible causes:**
 - Large codebase with many results
 - API rate limits
+- Local model performance (Ollama)
 
 **Solution:**
 - Use Gemini Flash for faster responses

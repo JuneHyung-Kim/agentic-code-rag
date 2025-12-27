@@ -46,48 +46,43 @@ Global configuration singleton for the application.
 |-----------|------|-------------|---------|
 | `openai_api_key` | `str \| None` | OpenAI API key from environment | `None` |
 | `gemini_api_key` | `str \| None` | Gemini API key from environment | `None` |
-| `model_provider` | `str` | AI provider: "openai" or "gemini" | `"openai"` |
-| `model_name` | `str` | Model name to use | `"gpt-4o"` |
+| `embedding_provider` | `str` | Provider for embeddings: "openai", "gemini", "ollama", "default" | `"default"` |
+| `embedding_model` | `str` | Model name for embeddings | `"text-embedding-3-small"` |
+| `chat_provider` | `str` | Provider for chat: "openai", "gemini", "ollama" | `"gemini"` |
+| `chat_model` | `str` | Model name for chat | `"gemini-1.5-flash"` |
+| `ollama_base_url` | `str` | Base URL for Ollama server | `"http://localhost:11434"` |
 | `project_root` | `str` | Root directory for projects | `"./"` |
 
-#### Properties
+#### Methods
 
-##### `is_valid`
+##### `validate_embedding_config(self) -> None`
 
-```python
-@property
-def is_valid(self) -> bool
-```
+Validate the current embedding configuration.
 
-Check if the configuration is valid based on the selected provider.
+**Raises:**
+- `ValueError`: If the provider is invalid or required API keys are missing.
 
-**Returns:**
-- `bool`: `True` if the required API key for the selected provider is set
+##### `validate_chat_config(self) -> None`
 
-**Example:**
-```python
-from config import config
+Validate the current chat configuration.
 
-if config.is_valid:
-    print(f"Using {config.model_provider}")
-else:
-    print("API key not configured")
-```
+**Raises:**
+- `ValueError`: If the provider is invalid or required API keys are missing.
 
 #### Usage
 
 ```python
-import os
-from dotenv import load_dotenv
 from config import config
 
-# Load environment variables
-load_dotenv()
-
 # Access configuration
-print(f"Provider: {config.model_provider}")
-print(f"Model: {config.model_name}")
-print(f"Valid: {config.is_valid}")
+print(f"Chat Provider: {config.chat_provider}")
+print(f"Embedding Model: {config.embedding_model}")
+
+try:
+    config.validate_chat_config()
+    print("Chat configuration is valid")
+except ValueError as e:
+    print(f"Configuration error: {e}")
 ```
 
 ---
@@ -238,6 +233,12 @@ Initialize the vector store with a persistent database.
 - `collection_name` (`str`, optional): Name of the ChromaDB collection (default: "code_chunks")
 - `persist_path` (`str`, optional): Path to the database directory (default: "./db")
 
+**Supported Embedding Providers (configured via .env):**
+- **OpenAI**: Uses `text-embedding-3-small` (or configured model)
+- **Gemini**: Uses Google Generative AI embeddings
+- **Ollama**: Uses local models via Ollama API
+- **Default**: Uses local Sentence Transformers (cpu-friendly)
+
 **Example:**
 ```python
 from indexing.vector_store import VectorStore
@@ -329,7 +330,12 @@ AI chat agent with code search capabilities.
 def __init__(self)
 ```
 
-Initialize the agent with the configured AI provider (OpenAI or Gemini).
+Initialize the agent with the configured AI provider.
+
+**Supported Providers:**
+- **OpenAI**: GPT-4o, GPT-3.5, etc.
+- **Gemini**: Gemini 1.5 Pro/Flash
+- **Ollama**: Local models (Llama 3, Qwen, etc.) via OpenAI-compatible API
 
 **Raises:**
 - `ValueError`: If API key is not configured or provider is invalid
@@ -583,35 +589,6 @@ for project_path in projects:
         print(f"Skipping {project_path} (not found)")
 
 print("\nAll projects indexed!")
-```
-
-### Example 6: Custom Embedding Provider
-
-```python
-from indexing.vector_store import VectorStore
-import os
-
-# Force use of OpenAI embeddings
-os.environ['OPENAI_API_KEY'] = 'your-key-here'
-
-# Ensure Gemini key is not set
-if 'GEMINI_API_KEY' in os.environ:
-    del os.environ['GEMINI_API_KEY']
-
-# Create store (will use OpenAI)
-store = VectorStore()
-
-# Add documents
-store.add_documents(
-    documents=["def foo(): pass"],
-    metadatas=[{'file_path': 'test.py', 'name': 'foo', 'type': 'function',
-                'start_line': 0, 'end_line': 0, 'language': 'python'}],
-    ids=["test.py:foo:0"]
-)
-
-# Query
-results = store.query("foo function")
-print(results)
 ```
 
 ---
