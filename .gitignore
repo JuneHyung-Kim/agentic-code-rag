@@ -21,6 +21,7 @@ db/
 # Logs
 logs/
 *.log
+tmp/
 
 # Virtual Environment
 .venv/

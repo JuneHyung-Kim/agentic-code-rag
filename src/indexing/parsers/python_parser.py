@@ -6,6 +6,52 @@ class PythonParser:
     def __init__(self, parser: Parser, language: Language):
         self.parser = parser
         self.language = language
+        self._node_types = self._load_node_types()
+        self._definition_query = self._build_definition_query()
+        self._import_query = self._build_import_query()
+
+    def _load_node_types(self) -> Set[str]:
+        node_types = set()
+        count = self.language.node_kind_count
+        if not isinstance(count, int):
+            count = self.language.node_kind_count()
+        for i in range(count):
+            node_types.add(self.language.node_kind_for_id(i))
+        return node_types
+
+    def _has_node_type(self, node_type: str) -> bool:
+        return node_type in self._node_types
+
+    def _build_definition_query(self) -> Optional[Query]:
+        parts = []
+        if self._has_node_type("function_definition"):
+            parts.append("(function_definition) @function")
+        if self._has_node_type("async_function_definition"):
+            parts.append("(async_function_definition) @function")
+        if self._has_node_type("class_definition"):
+            parts.append("(class_definition) @class")
+        if self._has_node_type("decorated_definition"):
+            if self._has_node_type("function_definition"):
+                parts.append("(decorated_definition (function_definition) @function)")
+            if self._has_node_type("async_function_definition"):
+                parts.append("(decorated_definition (async_function_definition) @function)")
+            if self._has_node_type("class_definition"):
+                parts.append("(decorated_definition (class_definition) @class)")
+        if self._has_node_type("assignment"):
+            parts.append("(assignment) @assignment")
+        if not parts:
+            return None
+        return Query(self.language, "\n".join(parts))
+
+    def _build_import_query(self) -> Optional[Query]:
+        parts = []
+        if self._has_node_type("import_statement"):
+            parts.append("(import_statement) @import")
+        if self._has_node_type("import_from_statement"):
+            parts.append("(import_from_statement) @import")
+        if not parts:
+            return None
+        return Query(self.language, "\n".join(parts))
 
     def parse(self, code: str, file_path: str) -> List[CodeNode]:
         tree = self.parser.parse(bytes(code, "utf8"))
@@ -15,20 +61,14 @@ class PythonParser:
         file_imports = self._extract_imports(tree.root_node, code)
         
         # 2. Extract Definitions
-        query_scm = """
-        (function_definition) @function
-        (class_definition) @class
-        (assignment) @assignment
-        """
-        
-        query = Query(self.language, query_scm)
-        cursor = QueryCursor(query)
+        if not self._definition_query:
+            return nodes
+        cursor = QueryCursor(self._definition_query)
         captures = cursor.captures(tree.root_node)
         
         capture_list = []
-        for name, captured_nodes in captures.items():
-            for node in captured_nodes:
-                capture_list.append((node, name))
+        for node, name in self._iter_captures(captures):
+            capture_list.append((node, name))
         
         # Sort by position to handle hierarchy
         capture_list.sort(key=lambda x: x[0].start_byte)
@@ -85,19 +125,23 @@ class PythonParser:
             
         return nodes
 
+    def _iter_captures(self, captures):
+        if isinstance(captures, dict):
+            for name, nodes in captures.items():
+                for node in nodes:
+                    yield node, name
+        else:
+            for node, name in captures:
+                yield node, name
+
     def _extract_imports(self, root: Node, code: str) -> List[str]:
         imports = []
-        # Simple traversal for imports
-        # Python imports can be 'import_statement' or 'import_from_statement'
-        query = Query(self.language, """
-        (import_statement) @import
-        (import_from_statement) @import
-        """)
-        cursor = QueryCursor(query)
+        if not self._import_query:
+            return imports
+        cursor = QueryCursor(self._import_query)
         captures = cursor.captures(root)
-        for _, nodes in captures.items():
-            for node in nodes:
-                imports.append(self._get_text(node, code))
+        for node, _ in self._iter_captures(captures):
+            imports.append(self._get_text(node, code))
         return imports
 
     def _extract_docstring(self, node: Node, code: str) -> Optional[str]:
@@ -132,7 +176,9 @@ class PythonParser:
         
         args = []
         for child in params.children:
-            if child.type in ['identifier', 'typed_parameter', 'default_parameter']:
+            if child.type == 'identifier' or child.type.endswith('parameter'):
+                args.append(self._get_text(child, code))
+            elif child.type in ['list_splat', 'dictionary_splat', 'list_splat_pattern', 'dictionary_splat_pattern']:
                 args.append(self._get_text(child, code))
         return args
 
@@ -151,11 +197,18 @@ class PythonParser:
         if capture_type == 'assignment':
             left = node.child_by_field_name('left')
             if left:
-                if left.type == 'identifier':
-                    return self._get_text(left, code)
-                for child in left.children:
-                    if child.type == 'identifier':
-                        return self._get_text(child, code)
+                found = self._first_identifier_in(left, code)
+                if found:
+                    return found
+        return ""
+
+    def _first_identifier_in(self, node: Node, code: str) -> str:
+        if node.type == 'identifier':
+            return self._get_text(node, code)
+        for child in node.children:
+            found = self._first_identifier_in(child, code)
+            if found:
+                return found
         return ""
 
     def _find_parent_class(self, node: Node, code: str) -> Optional[str]:

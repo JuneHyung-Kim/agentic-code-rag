@@ -7,6 +7,19 @@ class CppParser:
         self.parser = parser
         self.language = language
         self.lang_type = lang_type  # 'c' or 'cpp'
+        self._node_types = self._load_node_types()
+
+    def _load_node_types(self) -> Set[str]:
+        node_types = set()
+        count = self.language.node_kind_count
+        if not isinstance(count, int):
+            count = self.language.node_kind_count()
+        for i in range(count):
+            node_types.add(self.language.node_kind_for_id(i))
+        return node_types
+
+    def _has_node_type(self, node_type: str) -> bool:
+        return node_type in self._node_types
 
     def parse(self, code: str, file_path: str) -> List[CodeNode]:
         tree = self.parser.parse(bytes(code, "utf8"))
@@ -16,25 +29,34 @@ class CppParser:
         includes = self._extract_includes(tree.root_node, code)
         
         # 2. Define Query
-        query_scm = """
-        (function_definition) @function
-        (struct_specifier) @struct
-        (enum_specifier) @enum
-        (type_definition) @typedef
-        (preproc_def) @macro
-        (declaration) @declaration
-        """
-        if self.lang_type == 'cpp':
-            query_scm += "\n(class_specifier) @class"
-            
-        query = Query(self.language, query_scm)
+        query_parts = []
+        if self._has_node_type("function_definition"):
+            query_parts.append("(function_definition) @function")
+        if self._has_node_type("struct_specifier"):
+            query_parts.append("(struct_specifier) @struct")
+        if self._has_node_type("enum_specifier"):
+            query_parts.append("(enum_specifier) @enum")
+        if self._has_node_type("type_definition"):
+            query_parts.append("(type_definition) @typedef")
+        if self._has_node_type("preproc_def"):
+            query_parts.append("(preproc_def) @macro")
+        if self._has_node_type("preproc_function_def"):
+            query_parts.append("(preproc_function_def) @macro")
+        if self._has_node_type("declaration"):
+            query_parts.append("(declaration) @declaration")
+        if self.lang_type == 'cpp' and self._has_node_type("class_specifier"):
+            query_parts.append("(class_specifier) @class")
+
+        if not query_parts:
+            return nodes
+
+        query = Query(self.language, "\n".join(query_parts))
         cursor = QueryCursor(query)
         captures = cursor.captures(tree.root_node)
         
         capture_list = []
-        for name, captured_nodes in captures.items():
-            for node in captured_nodes:
-                capture_list.append((node, name))
+        for node, name in self._iter_captures(captures):
+            capture_list.append((node, name))
         
         capture_list.sort(key=lambda x: x[0].start_byte)
         processed_ids = set()
@@ -44,6 +66,12 @@ class CppParser:
                 continue
             processed_ids.add(node.id)
             
+            if capture_type in ['struct', 'class', 'enum'] and not self._is_type_definition(node):
+                continue
+
+            if capture_type in ['struct', 'class'] and self._is_anonymous_type(node, code):
+                continue
+
             if capture_type == 'declaration':
                 if not self._is_top_level(node):
                     continue
@@ -58,6 +86,7 @@ class CppParser:
             signature = self._extract_signature(node, code, capture_type) if capture_type in ['function', 'function_decl'] else None
             return_type = self._extract_return_type(node, code, capture_type) if capture_type in ['function', 'function_decl'] else None
             arguments = self._extract_arguments(node, code) if capture_type in ['function', 'function_decl'] else []
+            parent_name = self._extract_parent_name(node, name, code, capture_type) if capture_type in ['function', 'function_decl'] else None
             
             code_node = CodeNode(
                 type=capture_type,
@@ -71,6 +100,7 @@ class CppParser:
                 arguments=arguments,
                 return_type=return_type,
                 signature=signature,
+                parent_name=parent_name,
                 imports=includes
             )
             nodes.append(code_node)
@@ -79,13 +109,15 @@ class CppParser:
 
     def _extract_includes(self, root: Node, code: str) -> List[str]:
         includes = []
-        # Preprocessor includes
+        if not self._has_node_type("preproc_include"):
+            return includes
         query = Query(self.language, "(preproc_include) @include")
         cursor = QueryCursor(query)
         captures = cursor.captures(root)
-        for _, nodes in captures.items():
-            for node in nodes:
-                includes.append(self._get_text(node, code).strip())
+        for node, _ in self._iter_captures(captures):
+            text = self._get_text(node, code).strip()
+            if text and text not in includes:
+                includes.append(text)
         return includes
 
     def _extract_docstring(self, node: Node, code: str) -> Optional[str]:
@@ -142,6 +174,21 @@ class CppParser:
             
         return "anonymous"
 
+    def _extract_parent_name(self, node: Node, name: str, code: str, capture_type: str) -> Optional[str]:
+        if capture_type not in ['function', 'function_decl']:
+            return None
+        if "::" in name:
+            return name.rsplit("::", 1)[0]
+
+        parent = node.parent
+        while parent:
+            if parent.type in ['class_specifier', 'struct_specifier']:
+                name_node = parent.child_by_field_name('name')
+                if name_node:
+                    return self._get_text(name_node, code)
+            parent = parent.parent
+        return None
+
     def _extract_signature(self, node: Node, code: str, capture_type: str) -> Optional[str]:
         if capture_type == 'function':
             body = node.child_by_field_name('body')
@@ -153,9 +200,30 @@ class CppParser:
         return None
 
     def _extract_return_type(self, node: Node, code: str, capture_type: str) -> Optional[str]:
+        if capture_type in ['function', 'function_decl']:
+            name_node = self._find_declarator_name_node(node)
+            if name_node:
+                return code[node.start_byte:name_node.start_byte].strip()
         type_node = node.child_by_field_name('type')
         if type_node:
             return self._get_text(type_node, code).strip()
+        return None
+
+    def _find_declarator_name_node(self, node: Node) -> Optional[Node]:
+        decl = node.child_by_field_name('declarator')
+        while decl:
+            if decl.type == 'function_declarator':
+                decl = decl.child_by_field_name('declarator')
+                continue
+            if decl.type in ['pointer_declarator', 'reference_declarator']:
+                decl = decl.child_by_field_name('declarator')
+                continue
+            if decl.type in ['identifier', 'field_identifier', 'qualified_identifier', 'type_identifier']:
+                return decl
+            next_decl = decl.child_by_field_name('declarator')
+            if not next_decl:
+                break
+            decl = next_decl
         return None
 
     def _extract_arguments(self, node: Node, code: str) -> List[str]:
@@ -195,7 +263,29 @@ class CppParser:
             return parts[1]
         return "macro"
 
+    def _is_type_definition(self, node: Node) -> bool:
+        body = node.child_by_field_name('body')
+        if body:
+            return True
+        for child in node.children:
+            if child.type in ['field_declaration_list', 'enumerator_list']:
+                return True
+        return False
+
+    def _is_anonymous_type(self, node: Node, code: str) -> bool:
+        name_node = node.child_by_field_name('name')
+        return name_node is None or self._get_text(name_node, code).strip() == ""
+
     def _get_text(self, node: Node, code: str) -> str:
         if not node:
             return ""
         return code[node.start_byte:node.end_byte]
+
+    def _iter_captures(self, captures):
+        if isinstance(captures, dict):
+            for name, nodes in captures.items():
+                for node in nodes:
+                    yield node, name
+        else:
+            for node, name in captures:
+                yield node, name
