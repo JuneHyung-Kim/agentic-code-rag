@@ -9,6 +9,8 @@ from config import config
 class VectorStore:
     def __init__(self, collection_name="code_chunks", persist_path="./db"):
         logger.info(f"Initializing vector store at {persist_path}")
+        self.collection_name = collection_name
+        self.persist_path = persist_path
         self.client = chromadb.PersistentClient(path=persist_path)
         
         # Get embedding function based on configuration
@@ -17,7 +19,7 @@ class VectorStore:
         # Try to get or create collection, handle embedding function conflicts
         try:
             self.collection = self.client.get_or_create_collection(
-                name=collection_name,
+                name=self.collection_name,
                 embedding_function=self.ef
             )
         except ValueError as e:
@@ -27,7 +29,7 @@ class VectorStore:
                     self.client.delete_collection(name=collection_name)
                     logger.info(f"Deleted old collection. Creating new one with current embedding function...")
                     self.collection = self.client.create_collection(
-                        name=collection_name,
+                        name=self.collection_name,
                         embedding_function=self.ef
                     )
                 except Exception as delete_err:
@@ -111,3 +113,26 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Query failed: {type(e).__name__}: {e}")
             raise
+
+    def delete_by_file_path(self, file_path: str) -> None:
+        """Delete all indexed nodes for a specific file path."""
+        try:
+            self.collection.delete(where={"file_path": file_path})
+            logger.debug(f"Deleted documents for file: {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to delete documents for {file_path}: {type(e).__name__}: {e}")
+            raise
+
+    def reset_collection(self) -> None:
+        """Delete and recreate the collection (used for full reindex)."""
+        try:
+            self.client.delete_collection(name=self.collection_name)
+            logger.info(f"Deleted collection: {self.collection_name}")
+        except Exception as e:
+            logger.warning(f"Failed to delete collection '{self.collection_name}': {e}")
+
+        self.collection = self.client.create_collection(
+            name=self.collection_name,
+            embedding_function=self.ef
+        )
+        logger.info(f"Recreated collection: {self.collection_name}")

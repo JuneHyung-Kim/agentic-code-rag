@@ -15,7 +15,7 @@
 - Vector database indexing (ChromaDB)
 - Semantic code search
 - AI chat interface with function calling
-- Multi-provider support (OpenAI, Gemini)
+- Multi-provider support (OpenAI, Gemini, Ollama)
 
 ---
 
@@ -86,18 +86,18 @@
 ### 1.3 Incremental Indexing
 **Goal**: Update index when files change without full re-indexing
 
-- [ ] **File Change Detection**
-  - Track file modification times
+- [x] **File Change Detection**
+  - Track file modification times and SHA1
   - Identify changed/added/deleted files
   
-- [ ] **Partial Re-indexing**
+- [x] **Partial Re-indexing**
   - Remove old entries for changed files
   - Add new entries for changed/new files
   - Skip unchanged files
 
-- [ ] **Index Versioning**
+- [x] **Index Versioning**
   - Store index schema version
-  - Handle migrations when parser logic changes
+  - Full re-index on schema or root path change
 
 **Why**: Faster iteration when working with large codebases
 

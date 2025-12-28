@@ -41,6 +41,35 @@ Filtering happens in `CodeIndexer._index_file` in `src/indexing/indexer.py`.
 
 ---
 
+## Incremental Indexing
+
+Incremental indexing tracks file changes and updates the vector store without a full re-index.
+
+Registry:
+- Stored at `db/index_registry.json`
+- Includes `schema_version`, `root_path`, and a `files` map keyed by relative file path
+- Each file record stores `mtime`, `size`, and `sha1`
+
+Change detection:
+- Added: file exists now but not in registry
+- Modified: `sha1` differs from registry
+- Deleted: file missing from current scan
+
+Update rules:
+- Added/Modified: remove old entries (by `file_path`) then re-index file
+- Deleted: remove old entries (by `file_path`) only
+- Unchanged files are skipped
+
+Full re-index trigger:
+- `schema_version` mismatch or `root_path` change results in a full collection reset
+
+Implementation:
+- Registry helpers in `src/indexing/file_registry.py`
+- Incremental flow in `src/indexing/indexer.py`
+- File-level deletes in `src/indexing/vector_store.py`
+
+---
+
 ## CodeNode Schema
 
 `src/indexing/schema.py` defines the canonical structure used during indexing.
