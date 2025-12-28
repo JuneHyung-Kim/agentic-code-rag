@@ -19,25 +19,49 @@
 
 ---
 
+## 📌 Phase Item Overview
+- **Phase 1: Enhanced Indexing**
+  - 1.1 Richer Metadata Extraction
+  - 1.2 Language Support Expansion
+  - 1.3 Incremental Indexing
+- **Phase 2: Advanced Search Capabilities**
+  - 2.1 Multi-Strategy Search
+  - 2.2 Contextual Search
+  - 2.3 Search Result Ranking Improvements
+  - 2.4 Retrieval Quality Evaluation
+- **Phase 3: Code Analysis & Understanding**
+  - 3.1 Static Analysis Integration
+  - 3.2 Code Quality Insights
+- **Phase 4: Agent Collaboration Features**
+  - 4.1 Multi-Agent Messaging Protocol
+  - 4.2 Context Sharing
+- **Phase 5: Performance & Scalability**
+  - 5.1 Large Codebase Optimization
+  - 5.2 Query Performance
+
+---
+
 ## 📋 Phase 1: Enhanced Indexing (Next)
 
 ### 1.1 Richer Metadata Extraction
 **Goal**: Extract more context from code for better search results
 
+**Status**: In progress (signatures/docstrings captured for Python/C/C++)
+
 - [ ] **Function Signatures**
-  - Parameter names and types
-  - Return type information
-  - Generic/template parameters (C++)
+  - [x] Parameter names and types
+  - [x] Return type information
+  - [ ] Generic/template parameters (C++)
   
 - [ ] **Documentation Extraction**
-  - Docstrings (Python)
-  - Doxygen comments (C/C++)
-  - Inline comments near definitions
+  - [x] Docstrings (Python)
+  - [ ] Doxygen comments (C/C++)
+  - [ ] Inline comments near definitions
   
-- [ ] **Code Metrics**
-  - Function complexity (cyclomatic complexity)
-  - Lines of code
-  - Number of parameters
+- [ ] **LLM-assisted metadata enrichment**
+  - summary/tagging... or hints
+
+**Note**: C/C++ parsing currently captures leading comment blocks, but does not parse Doxygen tags yet.
 
 **Why**: Better metadata = more accurate search and smarter AI responses
 
@@ -143,6 +167,21 @@
   - Learn to improve ranking over time
 
 **Why**: Top results should be what users actually need
+
+---
+
+### 2.4 Retrieval Quality Evaluation
+**Goal**: Measure and improve retrieval quality for Code RAG
+
+- [ ] **Golden Query Set**
+  - Curated queries with expected symbols
+  - Track precision/recall and top-k hit rate
+
+- [ ] **Human-in-the-loop Review**
+  - Periodic spot checks of top results
+  - Track regressions across releases
+
+**Why**: Search quality needs objective evaluation, not just unit tests
 
 ---
 
@@ -299,6 +338,10 @@ Each phase should include:
    - Measure indexing time
    - Measure search latency
    - Monitor memory usage
+
+5. **Retrieval Quality Testing**
+   - Maintain a golden query set with expected results
+   - Track precision/recall and regressions over time
 
 ---
 

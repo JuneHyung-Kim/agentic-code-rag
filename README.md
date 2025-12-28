@@ -43,6 +43,7 @@ python src/main.py chat
 
 - [User Guide](./docs/USER_GUIDE.md)
 - [Developer Guide](./docs/DEVELOPER_GUIDE.md)
+- [Indexing and Parsing Guide](./docs/INDEXING_AND_PARSING.md)
 - [API Reference](./docs/API_REFERENCE.md)
 - [Roadmap](./ROADMAP.md) - Future improvements and features
 
