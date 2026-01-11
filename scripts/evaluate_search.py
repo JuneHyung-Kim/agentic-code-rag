@@ -6,6 +6,7 @@ import argparse
 import json
 from typing import List, Dict, Any, Optional
 
+# Usage examples:
 # python scripts/evaluate_search.py --mode generate --n 10
 # python scripts/evaluate_search.py --mode evaluate --k 5
 

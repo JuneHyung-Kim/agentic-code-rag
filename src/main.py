@@ -57,6 +57,22 @@ def start_chat():
     except Exception as e:
         print(f"Failed to start agent: {e}")
 
+def reset_database():
+    """Reset the vector database completely."""
+    print("⚠️  WARNING: This will delete ALL indexed data.")
+    confirm = input("Are you sure you want to reset the database? [y/N]: ")
+    
+    if confirm.lower() == 'y':
+        try:
+            store = VectorStore()
+            store.reset_collection()
+            print("✅ Database reset successfully.")
+        except Exception as e:
+            print(f"❌ Failed to reset database: {e}")
+            print("   (Tip: Try deleting the './db' folder manually if this fails.)")
+    else:
+        print("Operation cancelled.")
+
 def main():
     parser = argparse.ArgumentParser(description="OS Devel Agent CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -72,6 +88,9 @@ def main():
     # Chat command
     chat_parser = subparsers.add_parser("chat", help="Start a chat session with the AI Agent")
 
+    # Reset command
+    reset_parser = subparsers.add_parser("reset", help="Reset (Clear) the vector database")
+
     args = parser.parse_args()
 
     if args.command == "index":
@@ -80,6 +99,8 @@ def main():
         search_code(args.query)
     elif args.command == "chat":
         start_chat()
+    elif args.command == "reset":
+        reset_database()
     else:
         parser.print_help()
 

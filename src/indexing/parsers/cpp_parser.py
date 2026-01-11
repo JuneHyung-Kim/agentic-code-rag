@@ -1,3 +1,4 @@
+import re
 from tree_sitter import Language, Parser, Query, QueryCursor, Node
 from typing import List, Optional, Set
 from ..schema import CodeNode
@@ -66,24 +67,36 @@ class CppParser:
                 continue
             processed_ids.add(node.id)
             
+            # Skip nodes that contain parse errors to reduce noisy captures
+            if getattr(node, "has_error", False):
+                continue
+            
             if capture_type in ['struct', 'class', 'enum'] and not self._is_type_definition(node):
                 continue
 
-            if capture_type in ['struct', 'class'] and self._is_anonymous_type(node, code):
+            if capture_type in ['struct', 'class', 'enum', 'typedef'] and self._is_anonymous_type(node, code):
                 continue
 
             if capture_type == 'declaration':
                 if not self._is_top_level(node):
                     continue
-                if self._is_function_declaration(node):
+                if self._is_function_declaration(node) and not node.child_by_field_name('body'):
                     capture_type = 'function_decl'
                 else:
                     capture_type = 'global_var'
 
+            # Defensive: ensure function captures actually have a declarator
+            if capture_type in ['function', 'function_decl'] and not self._find_function_declarator(node):
+                continue
+
             # Resolve complex names (pointers, namespaces)
             name = self._resolve_name(node, code, capture_type)
+            if not self._is_valid_name(name, capture_type):
+                continue
             docstring = self._extract_docstring(node, code) if capture_type in ['function', 'function_decl', 'struct', 'class', 'enum', 'typedef'] else None
             signature = self._extract_signature(node, code, capture_type) if capture_type in ['function', 'function_decl'] else None
+            if capture_type in ['function', 'function_decl'] and signature is None:
+                continue
             return_type = self._extract_return_type(node, code, capture_type) if capture_type in ['function', 'function_decl'] else None
             arguments = self._extract_arguments(node, code) if capture_type in ['function', 'function_decl'] else []
             parent_name = self._extract_parent_name(node, name, code, capture_type) if capture_type in ['function', 'function_decl'] else None
@@ -145,12 +158,19 @@ class CppParser:
                     decl = decl.child_by_field_name('declarator')
                 elif decl.type in ['identifier', 'field_identifier', 'qualified_identifier', 'type_identifier']:
                     return self._get_text(decl, code)
+                elif decl.type in ['operator_name', 'operator_cast', 'conversion_function_id']:
+                    # Handle operator overloads (e.g., operator(), operator+, casts)
+                    return self._get_text(decl, code)
                 else:
                     # Fallback or deeper nesting
                     if not decl.child_by_field_name('declarator'):
                          # Try to find identifier in children
                          for child in decl.children:
                              if child.type == 'identifier':
+                                 return self._get_text(child, code)
+                         # Try operator token in children
+                         for child in decl.children:
+                             if child.type in ['operator_name', 'operator_cast', 'conversion_function_id']:
                                  return self._get_text(child, code)
                     break
 
@@ -196,6 +216,9 @@ class CppParser:
                 return code[node.start_byte:body.start_byte].strip()
         if capture_type == 'function_decl':
             text = self._get_text(node, code).strip()
+            # Guard against runaway captures that span many lines
+            if text.count("\n") > 20 or len(text) > 2000:
+                return None
             return text.rstrip(';').strip()
         return None
 
@@ -280,6 +303,26 @@ class CppParser:
         if not node:
             return ""
         return code[node.start_byte:node.end_byte]
+
+    def _is_valid_name(self, name: str, capture_type: str) -> bool:
+        if not name:
+            return False
+        stripped = name.strip()
+        if not stripped:
+            return False
+        # Reject obvious junk: whitespace, braces, delimiters
+        if any(ch.isspace() for ch in stripped):
+            return False
+        if any(ch in stripped for ch in "{};()[]"):
+            return False
+        # Allow identifiers, namespaces, template params, destructors, operators
+        op_pattern = r'^operator.*$'
+        ident_pattern = r'^[A-Za-z_~][A-Za-z0-9_:<>]*$'
+        if re.match(op_pattern, stripped):
+            return True
+        if re.match(ident_pattern, stripped):
+            return True
+        return False
 
     def _iter_captures(self, captures):
         if isinstance(captures, dict):
