@@ -7,8 +7,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import config
 from indexing.indexer import CodeIndexer
-from storage.vector_store import VectorStore
-from retrieval.search_engine import SearchEngine
+from storage.vector_store import get_vector_store
+from retrieval.search_engine import get_search_engine
 from agent.core import CodeAgent
 
 def index_project(project_path: str):
@@ -22,8 +22,7 @@ def search_code(query: str, n_results: int = 5, alpha: float = 0.7):
     """
     Run hybrid search (semantic + keyword) against the indexed codebase.
     """
-    store = VectorStore()
-    engine = SearchEngine(store)
+    engine = get_search_engine()
     results = engine.hybrid_search(query, n_results=n_results, alpha=alpha)
     
     print(f"\nSearch results for: '{query}'\n")
@@ -69,7 +68,7 @@ def reset_database():
     
     if confirm.lower() == 'y':
         try:
-            store = VectorStore()
+            store = get_vector_store()
             store.reset_collection()
             print("✅ Database reset successfully.")
         except Exception as e:

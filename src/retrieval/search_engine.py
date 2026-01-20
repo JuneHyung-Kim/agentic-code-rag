@@ -8,8 +8,13 @@ class SearchEngine:
     Retrieval Business Logic.
     Implements Hybrid Search combining Semantic Search and Keyword Search.
     """
-    def __init__(self, vector_store: VectorStore):
-        self.vector_store = vector_store
+    def __init__(self, vector_store: VectorStore = None):
+        if vector_store is None:
+            from storage.vector_store import get_vector_store
+            self.vector_store = get_vector_store()
+        else:
+            self.vector_store = vector_store
+            
         self.keyword_store = KeywordStore()
         
         # Sync keyword store with vector store data on init
@@ -71,3 +76,12 @@ class SearchEngine:
         # 4. Sort and Limit
         combined_results.sort(key=lambda x: x['score'], reverse=True)
         return combined_results[:n_results]
+
+# Singleton instance
+_search_engine_instance = None
+
+def get_search_engine() -> SearchEngine:
+    global _search_engine_instance
+    if _search_engine_instance is None:
+        _search_engine_instance = SearchEngine()
+    return _search_engine_instance

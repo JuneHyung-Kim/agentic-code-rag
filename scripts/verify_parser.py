@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 try:
     from indexing.parser import CodeParser
-    from storage.vector_store import VectorStore
+    from storage.vector_store import get_vector_store
 except ImportError as e:
     print(f"Error importing modules: {e}")
     print("Make sure you are running this script correctly from the project root or scripts directory.")
@@ -70,7 +70,7 @@ def inspect_db_samples(n_samples, output_file=None):
     print(f"🔍 Inspecting Vector Database (Random {n_samples} samples)...")
     
     try:
-        store = VectorStore()
+        store = get_vector_store()
         # Fetch all data (ids, metadatas, documents)
         all_data = store.collection.get(include=['metadatas', 'documents'])
         total_docs = len(all_data['ids'])

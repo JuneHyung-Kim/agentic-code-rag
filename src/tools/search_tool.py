@@ -1,6 +1,6 @@
 from typing import Dict, Any
 from storage.vector_store import VectorStore
-from retrieval.search_engine import SearchEngine
+from retrieval.search_engine import get_search_engine
 
 class SearchTool:
     """
@@ -8,9 +8,8 @@ class SearchTool:
     Delegates actual work to the SearchEngine in the retrieval layer.
     """
     def __init__(self):
-        # In a generic app, these might be singletons or injected
-        self.vector_store = VectorStore()
-        self.search_engine = SearchEngine(self.vector_store)
+        # Use singleton engine
+        self.search_engine = get_search_engine()
 
     def search_codebase(self, query: str, n_results: int = 5) -> str:
         """

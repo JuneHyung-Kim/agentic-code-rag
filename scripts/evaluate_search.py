@@ -16,8 +16,8 @@ project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 
 try:
-    from src.storage.vector_store import VectorStore
-    from src.retrieval.search_engine import SearchEngine
+    from src.storage.vector_store import get_vector_store
+    from src.retrieval.search_engine import get_search_engine
     from src.config import config
     from src.utils.logger import logger
 except ImportError as e:
@@ -30,8 +30,10 @@ DATASET_FILE = os.path.join(DATASET_DIR, "test_dataset.json")
 
 class SearchEvaluator:
     def __init__(self, persist_path: Optional[str] = None, alpha: float = 0.7):
-        self.store = VectorStore(persist_path=persist_path)
-        self.engine = SearchEngine(self.store)
+        # Note: persistent_path is effectively ignored if the singleton is already created
+        # but we use the singleton to match application behavior.
+        self.store = get_vector_store()
+        self.engine = get_search_engine()
         self.alpha = alpha
         
     async def generate_synthetic_query(self, document: str, metadata: Dict) -> str:

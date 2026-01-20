@@ -76,3 +76,12 @@ class VectorStore:
         self.collection = self.client.create_collection(
             name=self.collection_name, embedding_function=self.ef
         )
+
+# Singleton instance
+_vector_store_instance = None
+
+def get_vector_store() -> VectorStore:
+    global _vector_store_instance
+    if _vector_store_instance is None:
+        _vector_store_instance = VectorStore()
+    return _vector_store_instance
