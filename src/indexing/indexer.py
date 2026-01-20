@@ -4,7 +4,7 @@ import hashlib
 from typing import List, Dict, Any
 from tqdm import tqdm
 from .parser import CodeParser
-from .vector_store import VectorStore
+from storage.vector_store import VectorStore
 from .schema import CodeNode
 from .file_registry import (
     SCHEMA_VERSION,

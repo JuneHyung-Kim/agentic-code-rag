@@ -7,7 +7,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import config
 from indexing.indexer import CodeIndexer
-from indexing.vector_store import VectorStore
+from storage.vector_store import VectorStore
+from retrieval.search_engine import SearchEngine
 from agent.core import CodeAgent
 
 def index_project(project_path: str):
@@ -17,24 +18,28 @@ def index_project(project_path: str):
     indexer = CodeIndexer(project_path)
     indexer.index_project()
 
-def search_code(query: str):
+def search_code(query: str, n_results: int = 5, alpha: float = 0.7):
+    """
+    Run hybrid search (semantic + keyword) against the indexed codebase.
+    """
     store = VectorStore()
-    results = store.query(query)
+    engine = SearchEngine(store)
+    results = engine.hybrid_search(query, n_results=n_results, alpha=alpha)
     
     print(f"\nSearch results for: '{query}'\n")
-    
-    # ChromaDB query results structure:
-    # {'ids': [...], 'distances': [...], 'metadatas': [...], 'documents': [...]}
-    
-    if not results['documents'] or not results['documents'][0]:
+
+    if not results:
         print("No results found.")
         return
-
-    for i, doc in enumerate(results['documents'][0]):
-        meta = results['metadatas'][0][i]
-        print(f"--- Result {i+1} ({meta['file_path']}:{meta['start_line']}) ---")
-        print(f"Type: {meta['type']}, Name: {meta['name']}")
-        print(doc[:200] + "..." if len(doc) > 200 else doc)
+    
+    for i, res in enumerate(results):
+        meta = res["metadata"]
+        content = res["content"]
+        print(f"--- Result {i+1} (Score: {res['score']:.2f}) ---")
+        print(f"File: {meta.get('file_path')}:{meta.get('start_line')}-{meta.get('end_line')}")
+        print(f"Type: {meta.get('type')}, Name: {meta.get('name')}")
+        snippet = content[:400] + "..." if len(content) > 400 else content
+        print(snippet)
         print("\n")
 
 def start_chat():
@@ -82,8 +87,21 @@ def main():
     index_parser.add_argument("path", help="Path to the project to index")
 
     # Search command
-    search_parser = subparsers.add_parser("search", help="Search the indexed code")
+    search_parser = subparsers.add_parser("search", help="Search the indexed code (hybrid)")
     search_parser.add_argument("query", help="Query string")
+    search_parser.add_argument(
+        "--n-results",
+        "-k",
+        type=int,
+        default=5,
+        help="Number of results to return (default: 5)",
+    )
+    search_parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.7,
+        help="Weight for vector score (1.0=vector only, 0.0=keyword only)",
+    )
 
     # Chat command
     chat_parser = subparsers.add_parser("chat", help="Start a chat session with the AI Agent")
@@ -96,7 +114,7 @@ def main():
     if args.command == "index":
         index_project(args.path)
     elif args.command == "search":
-        search_code(args.query)
+        search_code(args.query, n_results=args.n_results, alpha=args.alpha)
     elif args.command == "chat":
         start_chat()
     elif args.command == "reset":

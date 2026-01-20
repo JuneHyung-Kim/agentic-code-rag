@@ -11,7 +11,7 @@ import json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from indexing.indexer import CodeIndexer
-from indexing.vector_store import VectorStore
+from storage.vector_store import VectorStore
 
 
 def _write_file(path: str, content: str) -> None:

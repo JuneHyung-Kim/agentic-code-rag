@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 try:
     from indexing.parser import CodeParser
-    from indexing.vector_store import VectorStore
+    from storage.vector_store import VectorStore
 except ImportError as e:
     print(f"Error importing modules: {e}")
     print("Make sure you are running this script correctly from the project root or scripts directory.")

@@ -4,11 +4,11 @@ import random
 import asyncio
 import argparse
 import json
-from typing import List, Dict, Any, Optional
+from typing import Dict, Optional
 
 # Usage examples:
 # python scripts/evaluate_search.py --mode generate --n 10
-# python scripts/evaluate_search.py --mode evaluate --k 5
+# python scripts/evaluate_search.py --mode evaluate --k 5 --alpha 0.7 --persist-path ./db
 
 # Add project root to sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -16,7 +16,8 @@ project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 
 try:
-    from src.indexing.vector_store import VectorStore
+    from src.storage.vector_store import VectorStore
+    from src.retrieval.search_engine import SearchEngine
     from src.config import config
     from src.utils.logger import logger
 except ImportError as e:
@@ -28,8 +29,10 @@ DATASET_DIR = os.path.join(project_root, "tmp")
 DATASET_FILE = os.path.join(DATASET_DIR, "test_dataset.json")
 
 class SearchEvaluator:
-    def __init__(self):
-        self.store = VectorStore()
+    def __init__(self, persist_path: Optional[str] = None, alpha: float = 0.7):
+        self.store = VectorStore(persist_path=persist_path)
+        self.engine = SearchEngine(self.store)
+        self.alpha = alpha
         
     async def generate_synthetic_query(self, document: str, metadata: Dict) -> str:
         """Generates a search query using the configured LLM."""
@@ -203,9 +206,9 @@ class SearchEvaluator:
                 print(f"   ⚠️  Target skipped (Not found in current DB): {target_name}")
                 continue
                 
-            # 2. Perform Search
-            search_res = self.store.query(query, n_results=top_k)
-            retrieved_ids = search_res['ids'][0] if search_res['ids'] else []
+            # 2. Perform Search (hybrid)
+            search_res = self.engine.hybrid_search(query, n_results=top_k, alpha=self.alpha)
+            retrieved_ids = [res.get("id") for res in search_res if res.get("id")]
             
             # 3. Check Rank
             hit = False
@@ -241,10 +244,12 @@ if __name__ == "__main__":
     parser.add_argument("--mode", type=str, required=True, choices=['generate', 'evaluate'], help="Mode: generate new dataset or evaluate existing one")
     parser.add_argument("--n", type=int, default=20, help="Number of samples to generate")
     parser.add_argument("--k", type=int, default=5, help="Top-K results to consider")
+    parser.add_argument("--persist-path", type=str, default=None, help="Path to the ChromaDB persist directory (default: ./db)")
+    parser.add_argument("--alpha", type=float, default=0.7, help="Weight for vector score (1.0=vector only, 0.0=keyword only)")
     
     args = parser.parse_args()
     
-    evaluator = SearchEvaluator()
+    evaluator = SearchEvaluator(persist_path=args.persist_path, alpha=args.alpha)
     
     if args.mode == 'generate':
         # Async run for generation

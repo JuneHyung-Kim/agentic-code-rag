@@ -1,58 +1,48 @@
-from typing import List, Dict, Any
-from indexing.vector_store import VectorStore
+from typing import Dict, Any
+from storage.vector_store import VectorStore
+from retrieval.search_engine import SearchEngine
 
 class SearchTool:
+    """
+    External interface for agents to perform code searches.
+    Delegates actual work to the SearchEngine in the retrieval layer.
+    """
     def __init__(self):
+        # In a generic app, these might be singletons or injected
         self.vector_store = VectorStore()
+        self.search_engine = SearchEngine(self.vector_store)
 
     def search_codebase(self, query: str, n_results: int = 5) -> str:
         """
-        Search the codebase for relevant code snippets based on a natural language query.
-        
-        Args:
-            query (str): The search query describing what you are looking for.
-            n_results (int): Number of results to return.
-            
-        Returns:
-            str: A formatted string containing the search results.
+        Tool entry point for searching code.
         """
-        results = self.vector_store.query(query, n_results)
+        results = self.search_engine.hybrid_search(query, n_results=n_results)
         
-        if not results['documents'] or not results['documents'][0]:
+        if not results:
             return "No relevant code found."
 
-        formatted_results = []
-        for i, doc in enumerate(results['documents'][0]):
-            meta = results['metadatas'][0][i]
-            formatted_results.append(
-                f"Result {i+1}:\n"
-                f"File: {meta['file_path']}\n"
-                f"Type: {meta['type']}\n"
-                f"Name: {meta['name']}\n"
-                f"Line: {meta['start_line']}-{meta['end_line']}\n"
-                f"Content:\n{doc}\n"
+        formatted = []
+        for i, res in enumerate(results):
+            meta = res['metadata']
+            formatted.append(
+                f"Result {i+1} (Score: {res['score']:.2f}):\n"
+                f"File: {meta.get('file_path')}\n"
+                f"Line: {meta.get('start_line')}-{meta.get('end_line')}\n"
+                f"Content:\n{res['content']}\n"
             )
-            
-        return "\n".join(formatted_results)
+        return "\n".join(formatted)
 
     def get_tool_definition(self) -> Dict[str, Any]:
         return {
             "type": "function",
             "function": {
                 "name": "search_codebase",
-                "description": "Search the codebase for relevant code snippets using semantic search.",
+                "description": "Search code using hybrid (semantic+keyword) strategy.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query describing the code functionality or concept."
-                        },
-                        "n_results": {
-                            "type": "integer",
-                            "description": "Number of results to return (default: 5).",
-                            "default": 5
-                        }
+                        "query": {"type": "string", "description": "Search query."},
+                        "n_results": {"type": "integer", "default": 5}
                     },
                     "required": ["query"]
                 }
