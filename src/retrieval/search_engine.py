@@ -29,17 +29,31 @@ class SearchEngine:
         except Exception as e:
             logger.error(f"Failed to sync keyword index: {e}")
 
-    def hybrid_search(self, query: str, n_results: int = 5, alpha: float = 0.7) -> List[Dict[str, Any]]:
+    def hybrid_search(
+        self,
+        query: str,
+        n_results: int = 5,
+        alpha: float = 0.7,
+        project_root: str = None
+    ) -> List[Dict[str, Any]]:
         """
         Executes hybrid search logic.
-        
+
         Args:
-            alpha (float): Weight for vector score (0.0~1.0). 
+            query (str): The search query.
+            n_results (int): Number of results to return.
+            alpha (float): Weight for vector score (0.0~1.0).
                            1.0 = Pure Vector, 0.0 = Pure Keyword.
+            project_root (str, optional): Filter results by project root path.
+                           If None, searches across all projects.
         """
         # 1. Retrieval: Vector Search (Get more candidates for reranking)
         k_candidates = n_results * 2
-        vector_res = self.vector_store.query(query, n_results=k_candidates)
+        vector_res = self.vector_store.query(
+            query,
+            n_results=k_candidates,
+            where_filter={"project_root": project_root} if project_root else None
+        )
         
         if not vector_res['ids'] or not vector_res['ids'][0]:
             return []

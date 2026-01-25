@@ -59,8 +59,14 @@ class VectorStore:
         if not documents: return
         self.collection.add(documents=documents, metadatas=metadatas, ids=ids)
 
-    def query(self, query_text: str, n_results: int = 5):
-        return self.collection.query(query_texts=[query_text], n_results=n_results)
+    def query(self, query_text: str, n_results: int = 5, where_filter: Dict = None):
+        kwargs = {
+            "query_texts": [query_text],
+            "n_results": n_results
+        }
+        if where_filter:
+            kwargs["where"] = where_filter
+        return self.collection.query(**kwargs)
 
     def get_all_documents(self) -> Dict[str, Any]:
         """Retrieve all documents for syncing with other stores."""

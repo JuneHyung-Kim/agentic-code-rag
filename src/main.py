@@ -18,24 +18,35 @@ def index_project(project_path: str):
     indexer = CodeIndexer(project_path)
     indexer.index_project()
 
-def search_code(query: str, n_results: int = 5, alpha: float = 0.7):
+def search_code(query: str, n_results: int = 5, alpha: float = 0.7, project_root: str = None):
     """
     Run hybrid search (semantic + keyword) against the indexed codebase.
     """
     engine = get_search_engine()
-    results = engine.hybrid_search(query, n_results=n_results, alpha=alpha)
-    
-    print(f"\nSearch results for: '{query}'\n")
+    results = engine.hybrid_search(
+        query,
+        n_results=n_results,
+        alpha=alpha,
+        project_root=project_root
+    )
+
+    search_scope = f" (filtered by project: {project_root})" if project_root else " (across all projects)"
+    print(f"\nSearch results for: '{query}'{search_scope}\n")
 
     if not results:
         print("No results found.")
         return
-    
+
     for i, res in enumerate(results):
         meta = res["metadata"]
         content = res["content"]
         print(f"--- Result {i+1} (Score: {res['score']:.2f}) ---")
-        print(f"File: {meta.get('file_path')}:{meta.get('start_line')}-{meta.get('end_line')}")
+
+        # Display relative_path if available, otherwise file_path
+        display_path = meta.get('relative_path', meta.get('file_path'))
+        project = meta.get('project_root', 'unknown')
+        print(f"Project: {project}")
+        print(f"File: {display_path}:{meta.get('start_line')}-{meta.get('end_line')}")
         print(f"Type: {meta.get('type')}, Name: {meta.get('name')}")
         snippet = content[:400] + "..." if len(content) > 400 else content
         print(snippet)
@@ -63,17 +74,31 @@ def start_chat():
 
 def reset_database():
     """Reset the vector database completely."""
-    print("⚠️  WARNING: This will delete ALL indexed data.")
+    import shutil
+
+    print("⚠️  WARNING: This will delete ALL indexed data, registry, and database files.")
+    print("   This includes all projects and ChromaDB metadata.")
     confirm = input("Are you sure you want to reset the database? [y/N]: ")
-    
+
     if confirm.lower() == 'y':
         try:
-            store = get_vector_store()
-            store.reset_collection()
-            print("✅ Database reset successfully.")
+            db_path = "./db"
+
+            if os.path.exists(db_path):
+                # Complete removal of db directory
+                shutil.rmtree(db_path)
+                print("✅ Database directory completely removed.")
+
+                # Recreate empty db directory
+                os.makedirs(db_path, exist_ok=True)
+                print("✅ Clean database directory created.")
+            else:
+                print("ℹ️  No database directory found.")
+
         except Exception as e:
             print(f"❌ Failed to reset database: {e}")
-            print("   (Tip: Try deleting the './db' folder manually if this fails.)")
+            print("   You may need to manually delete the './db' folder.")
+            print("   Command: rm -rf ./db")
     else:
         print("Operation cancelled.")
 
@@ -101,6 +126,13 @@ def main():
         default=0.7,
         help="Weight for vector score (1.0=vector only, 0.0=keyword only)",
     )
+    search_parser.add_argument(
+        "--project",
+        "-p",
+        type=str,
+        default=None,
+        help="Filter results by project root path (optional)",
+    )
 
     # Chat command
     chat_parser = subparsers.add_parser("chat", help="Start a chat session with the AI Agent")
@@ -113,7 +145,12 @@ def main():
     if args.command == "index":
         index_project(args.path)
     elif args.command == "search":
-        search_code(args.query, n_results=args.n_results, alpha=args.alpha)
+        search_code(
+            args.query,
+            n_results=args.n_results,
+            alpha=args.alpha,
+            project_root=args.project
+        )
     elif args.command == "chat":
         start_chat()
     elif args.command == "reset":

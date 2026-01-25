@@ -11,6 +11,8 @@ from .file_registry import (
     load_registry,
     save_registry,
     build_file_record,
+    get_project_files,
+    update_project_files,
 )
 from utils.logger import logger
 
@@ -38,26 +40,23 @@ class CodeIndexer:
 
         # 2. Load registry (if any)
         registry = load_registry(self.registry_path)
-        registry_root = registry.get("root_path") if registry else None
-        registry_version = registry.get("schema_version") if registry else None
-        registry_files = registry.get("files", {}) if registry else {}
+        if registry is None:
+            registry = {
+                "schema_version": SCHEMA_VERSION,
+                "projects": {}
+            }
+            logger.info("No existing registry found, creating new one")
 
-        # 3. Build current file records
+        # 3. Get existing files for this project
+        registry_files = get_project_files(registry, self.root_path)
+
+        # 4. Build current file records (using absolute paths as keys)
         current_files = {}
         current_paths = {}
         for file_path in all_files:
-            rel_path = os.path.relpath(file_path, self.root_path)
-            current_paths[rel_path] = file_path
-            current_files[rel_path] = build_file_record(file_path)
-
-        # 4. Full reindex if schema version or root path changed
-        if registry_version != SCHEMA_VERSION or registry_root != self.root_path:
-            logger.info("Registry mismatch detected. Performing full reindex.")
-            self.vector_store.reset_collection()
-            indexed_count, skipped_count, error_count = self._index_files(all_files)
-            self._save_registry(current_files)
-            self._report_results(indexed_count, skipped_count, error_count)
-            return
+            abs_path = os.path.abspath(file_path)
+            current_paths[abs_path] = file_path
+            current_files[abs_path] = build_file_record(file_path)
 
         # 5. Compute incremental changes
         added = [p for p in current_files.keys() if p not in registry_files]
@@ -67,16 +66,17 @@ class CodeIndexer:
             if p in registry_files and current_files[p]["sha1"] != registry_files[p].get("sha1")
         ]
 
-        # 6. Delete old entries for changed/deleted files
-        for rel_path in deleted + modified:
-            self.vector_store.delete_by_file_path(rel_path)
+        # 6. Delete old entries for changed/deleted files (using absolute path)
+        for abs_path in deleted + modified:
+            self.vector_store.delete_by_file_path(abs_path)
 
         # 7. Index only added/modified files
         target_paths = [current_paths[p] for p in added + modified]
         indexed_count, skipped_count, error_count = self._index_files(target_paths)
 
-        # 8. Save updated registry
-        self._save_registry(current_files)
+        # 8. Save updated registry for this project
+        update_project_files(registry, self.root_path, current_files)
+        save_registry(self.registry_path, registry)
 
         # 9. Report results
         logger.info(
@@ -118,7 +118,8 @@ class CodeIndexer:
             documents = []
             metadatas = []
             ids = []
-            
+
+            abs_path = os.path.abspath(file_path)
             rel_path = os.path.relpath(file_path, self.root_path)
 
             for i, node in enumerate(nodes):
@@ -135,12 +136,14 @@ class CodeIndexer:
                     parts.append(f"Parameters: {', '.join(node.arguments)}")
                 parts.append(f"Code:\n{node.content}")
                 embed_text = "\n\n".join(parts)
-                
+
                 documents.append(embed_text)
-                
+
                 # 5. Build metadata (Flatten lists to strings for vector DB compatibility)
                 metadata = {
-                    'file_path': rel_path,
+                    'file_path': abs_path,
+                    'project_root': self.root_path,
+                    'relative_path': rel_path,
                     'name': node.name,
                     'type': node.type,
                     'language': node.language,
@@ -166,7 +169,7 @@ class CodeIndexer:
                 metadatas.append(metadata)
                 
                 # 6. Generate unique ID
-                # Format: "path:kind:name:line:hash"
+                # Format: "abs_path:kind:name:line:hash"
                 sig_seed = "|".join([
                     node.signature or "",
                     node.return_type or "",
@@ -174,7 +177,7 @@ class CodeIndexer:
                 ])
                 hash_input = f"{node.content}\n{sig_seed}".encode("utf-8", errors="replace")
                 short_hash = hashlib.sha1(hash_input).hexdigest()[:10]
-                base_id = f"{rel_path}:{node.type}:{node.name}:{node.start_line}:{short_hash}"
+                base_id = f"{abs_path}:{node.type}:{node.name}:{node.start_line}:{short_hash}"
 
                 unique_id = base_id
                 suffix = 1
@@ -226,13 +229,6 @@ class CodeIndexer:
                     all_files.append(file_path)
         return all_files
 
-    def _save_registry(self, files: Dict[str, Any]) -> None:
-        data = {
-            "schema_version": SCHEMA_VERSION,
-            "root_path": self.root_path,
-            "files": files,
-        }
-        save_registry(self.registry_path, data)
 
     def _report_results(self, indexed_count: int, skipped_count: int, error_count: int) -> None:
         logger.info(f"Indexing complete. Indexed: {indexed_count}, Skipped: {skipped_count}, Errors: {error_count}")
