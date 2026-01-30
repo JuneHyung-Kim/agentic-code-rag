@@ -1,162 +1,76 @@
 import sys
 import os
-import argparse
+import time
 
 # Add src to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import config
 from indexing.indexer import CodeIndexer
-from storage.vector_store import get_vector_store
-from retrieval.search_engine import get_search_engine
 from agent.core import CodeAgent
 
-def index_project(project_path: str):
+def main():
+    print("="*50)
+    print("Agentic Code RAG - Starting Up")
+    print("="*50)
+
+    # 1. Indexing Phase
+    project_path = config.project_root
+    print(f"Target Project Path: {project_path}")
+    
     if not os.path.exists(project_path):
         print(f"Error: Path {project_path} does not exist.")
-        return
-    indexer = CodeIndexer(project_path)
-    indexer.index_project()
-
-def search_code(query: str, n_results: int = 5, alpha: float = 0.7, project_root: str = None):
-    """
-    Run hybrid search (semantic + keyword) against the indexed codebase.
-    """
-    engine = get_search_engine()
-    results = engine.hybrid_search(
-        query,
-        n_results=n_results,
-        alpha=alpha,
-        project_root=project_root
-    )
-
-    search_scope = f" (filtered by project: {project_root})" if project_root else " (across all projects)"
-    print(f"\nSearch results for: '{query}'{search_scope}\n")
-
-    if not results:
-        print("No results found.")
+        # If relative path fails, try to resolve it relative to CWD
+        abs_path = os.path.abspath(project_path)
+        print(f"Resolved Absolute Path: {abs_path}")
+        if not os.path.exists(abs_path):
+            print("❌ Critical Error: Target directory not found. Please check PROJECT_ROOT in .env")
+            return
+    
+    print("\n[1/2] Indexing Codebase...")
+    start_time = time.time()
+    try:
+        indexer = CodeIndexer(project_path)
+        indexer.index_project()
+        print(f"[OK] Indexing complete in {time.time() - start_time:.2f}s")
+    except Exception as e:
+        print(f"[X] Indexing failed: {e}")
         return
 
-    for i, res in enumerate(results):
-        meta = res["metadata"]
-        content = res["content"]
-        print(f"--- Result {i+1} (Score: {res['score']:.2f}) ---")
-
-        # Display relative_path if available, otherwise file_path
-        display_path = meta.get('relative_path', meta.get('file_path'))
-        project = meta.get('project_root', 'unknown')
-        print(f"Project: {project}")
-        print(f"File: {display_path}:{meta.get('start_line')}-{meta.get('end_line')}")
-        print(f"Type: {meta.get('type')}, Name: {meta.get('name')}")
-        snippet = content[:400] + "..." if len(content) > 400 else content
-        print(snippet)
-        print("\n")
-
-def start_chat():
+    # 2. Agent Initialization
+    print("\n[2/2] Initializing Agent...")
     try:
         agent = CodeAgent()
-        print("AI Agent initialized. Type 'exit' or 'quit' to stop.")
-        while True:
-            user_input = input("\nYou: ")
+        print("[OK] Agent ready.")
+    except Exception as e:
+        print(f"[X] Agent initialization failed: {e}")
+        return
+
+    # 3. Interactive Loop
+    print("\n" + "="*50)
+    print("Interactive Session Started")
+    print("Type 'exit' or 'quit' to end session.")
+    print("="*50)
+
+    while True:
+        try:
+            user_input = input("\nYou: ").strip()
+            if not user_input:
+                continue
+                
             if user_input.lower() in ['exit', 'quit']:
+                print("Goodbye!")
                 break
             
-            try:
-                response = agent.chat(user_input)
-                print(f"\nAgent: {response}")
-            except Exception as e:
-                print(f"Error during chat: {e}")
-                
-    except ValueError as e:
-        print(f"Configuration Error: {e}")
-    except Exception as e:
-        print(f"Failed to start agent: {e}")
-
-def reset_database():
-    """Reset the vector database completely."""
-    import shutil
-
-    print("⚠️  WARNING: This will delete ALL indexed data, registry, and database files.")
-    print("   This includes all projects and ChromaDB metadata.")
-    confirm = input("Are you sure you want to reset the database? [y/N]: ")
-
-    if confirm.lower() == 'y':
-        try:
-            db_path = "./db"
-
-            if os.path.exists(db_path):
-                # Complete removal of db directory
-                shutil.rmtree(db_path)
-                print("✅ Database directory completely removed.")
-
-                # Recreate empty db directory
-                os.makedirs(db_path, exist_ok=True)
-                print("✅ Clean database directory created.")
-            else:
-                print("ℹ️  No database directory found.")
-
+            print("Agent is thinking...")
+            response = agent.chat(user_input)
+            print(f"\nAgent: {response}")
+            
+        except KeyboardInterrupt:
+            print("\nUser interrupted. Exiting...")
+            break
         except Exception as e:
-            print(f"❌ Failed to reset database: {e}")
-            print("   You may need to manually delete the './db' folder.")
-            print("   Command: rm -rf ./db")
-    else:
-        print("Operation cancelled.")
-
-def main():
-    parser = argparse.ArgumentParser(description="OS Devel Agent CLI")
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-
-    # Index command
-    index_parser = subparsers.add_parser("index", help="Index a project")
-    index_parser.add_argument("path", help="Path to the project to index")
-
-    # Search command
-    search_parser = subparsers.add_parser("search", help="Search the indexed code (hybrid)")
-    search_parser.add_argument("query", help="Query string")
-    search_parser.add_argument(
-        "--n-results",
-        "-k",
-        type=int,
-        default=5,
-        help="Number of results to return (default: 5)",
-    )
-    search_parser.add_argument(
-        "--alpha",
-        type=float,
-        default=0.7,
-        help="Weight for vector score (1.0=vector only, 0.0=keyword only)",
-    )
-    search_parser.add_argument(
-        "--project",
-        "-p",
-        type=str,
-        default=None,
-        help="Filter results by project root path (optional)",
-    )
-
-    # Chat command
-    chat_parser = subparsers.add_parser("chat", help="Start a chat session with the AI Agent")
-
-    # Reset command
-    reset_parser = subparsers.add_parser("reset", help="Reset (Clear) the vector database")
-
-    args = parser.parse_args()
-
-    if args.command == "index":
-        index_project(args.path)
-    elif args.command == "search":
-        search_code(
-            args.query,
-            n_results=args.n_results,
-            alpha=args.alpha,
-            project_root=args.project
-        )
-    elif args.command == "chat":
-        start_chat()
-    elif args.command == "reset":
-        reset_database()
-    else:
-        parser.print_help()
+            print(f"\n❌ Error: {e}")
 
 if __name__ == "__main__":
     main()

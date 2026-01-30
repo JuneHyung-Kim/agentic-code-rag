@@ -232,7 +232,7 @@ class CodeIndexer:
 
     def _report_results(self, indexed_count: int, skipped_count: int, error_count: int) -> None:
         logger.info(f"Indexing complete. Indexed: {indexed_count}, Skipped: {skipped_count}, Errors: {error_count}")
-        print(f"\n✅ Indexing complete!")
-        print(f"   📁 Indexed: {indexed_count} files")
-        print(f"   ⏭️  Skipped: {skipped_count} files")
-        print(f"   ❌ Errors: {error_count} files")
+        print(f"\n[OK] Indexing complete!")
+        print(f"   [FILE] Indexed: {indexed_count} files")
+        print(f"   [SKIP] Skipped: {skipped_count} files")
+        print(f"   [ERR] Errors: {error_count} files")
