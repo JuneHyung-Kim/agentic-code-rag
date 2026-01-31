@@ -1,10 +1,9 @@
 import os
-import json
 import hashlib
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from tqdm import tqdm
+from utils.logger import logger
 from .parser import CodeParser
-from storage.vector_store import VectorStore
 from .schema import CodeNode
 from .file_registry import (
     SCHEMA_VERSION,
@@ -14,31 +13,45 @@ from .file_registry import (
     get_project_files,
     update_project_files,
 )
-from utils.logger import logger
+from .storage.vector_store import get_vector_store
+from .storage.keyword_store import get_keyword_store
+from .storage.graph_store import get_graph_store
+from .strategies.vector_strategy import VectorStrategy
+from .strategies.keyword_strategy import KeywordStrategy
+from .strategies.graph_strategy import GraphStrategy
 
 class CodeIndexer:
     def __init__(self, root_path: str, persist_path: str = "./db"):
         self.root_path = os.path.abspath(root_path)
         if not os.path.exists(self.root_path):
             raise FileNotFoundError(f"Project path does not exist: {self.root_path}")
-        if not os.path.isdir(self.root_path):
-            raise NotADirectoryError(f"Project path is not a directory: {self.root_path}")
         
         logger.info(f"Initializing indexer for: {self.root_path}")
         self.persist_path = os.path.abspath(persist_path)
-        self.parser = CodeParser()
-        self.vector_store = VectorStore(persist_path=self.persist_path)
         self.registry_path = os.path.join(self.persist_path, "index_registry.json")
+        self.parser = CodeParser()
         self.supported_exts = {'.py', '.c', '.h', '.cpp', '.hpp', '.cc', '.cxx'}
+        
+        # Initialize Stores (Singletons)
+        self.vector_store = get_vector_store()
+        self.keyword_store = get_keyword_store()
+        self.graph_store = get_graph_store()
+        
+        # Initialize Strategies
+        self.strategies = [
+            VectorStrategy(self.vector_store, self.root_path),
+            KeywordStrategy(self.keyword_store),
+            GraphStrategy(self.graph_store, self.root_path)
+        ]
         
     def index_project(self):
         logger.info(f"Starting indexing for project: {self.root_path}")
 
-        # 1. Collect all files to scan
+        # 1. Collect files
         all_files = self._discover_files()
         logger.info(f"Found {len(all_files)} files to scan")
 
-        # 2. Load registry (if any)
+        # 2. Load registry
         registry = load_registry(self.registry_path)
         if registry is None:
             registry = {
@@ -47,10 +60,10 @@ class CodeIndexer:
             }
             logger.info("No existing registry found, creating new one")
 
-        # 3. Get existing files for this project
+        # 3. Get existing files
         registry_files = get_project_files(registry, self.root_path)
 
-        # 4. Build current file records (using absolute paths as keys)
+        # 4. Build current file records
         current_files = {}
         current_paths = {}
         for file_path in all_files:
@@ -58,7 +71,7 @@ class CodeIndexer:
             current_paths[abs_path] = file_path
             current_files[abs_path] = build_file_record(file_path)
 
-        # 5. Compute incremental changes
+        # 5. Compute changes
         added = [p for p in current_files.keys() if p not in registry_files]
         deleted = [p for p in registry_files.keys() if p not in current_files]
         modified = [
@@ -66,138 +79,80 @@ class CodeIndexer:
             if p in registry_files and current_files[p]["sha1"] != registry_files[p].get("sha1")
         ]
 
-        # 6. Delete old entries for changed/deleted files (using absolute path)
-        for abs_path in deleted + modified:
-            self.vector_store.delete_by_file_path(abs_path)
+        logger.info(f"Changes detected: Added={len(added)}, Modified={len(modified)}, Deleted={len(deleted)}")
 
-        # 7. Index only added/modified files
+        # 6. Process Deletions
+        for abs_path in deleted + modified:
+            self._delete_file(abs_path)
+
+        # 7. Process Additions/Modifications
         target_paths = [current_paths[p] for p in added + modified]
         indexed_count, skipped_count, error_count = self._index_files(target_paths)
 
-        # 8. Save updated registry for this project
+        # 8. Update Registry
         update_project_files(registry, self.root_path, current_files)
         save_registry(self.registry_path, registry)
 
-        # 9. Report results
-        logger.info(
-            "Incremental indexing complete. Added: %d, Modified: %d, Deleted: %d",
-            len(added),
-            len(modified),
-            len(deleted),
-        )
         self._report_results(indexed_count, skipped_count, error_count)
                 
+    def _delete_file(self, abs_path: str):
+        """Delegate deletion to all strategies."""
+        for strategy in self.strategies:
+            strategy.delete(abs_path)
+
     def _index_file(self, file_path: str) -> str:
-        """
-        Parses and indexes a single file.
-        Returns: 'indexed', 'skipped', or 'error'
-        """
-        # 1. Filter by extension
+        """Parses and indexes a single file using all strategies."""
         ext = os.path.splitext(file_path)[1].lower()
         if ext not in self.supported_exts:
             return "skipped"
 
         try:
-            # 2. Read file content (Handle encoding issues)
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    code = f.read()
-            except UnicodeDecodeError:
-                logger.warning(f"UTF-8 decode failed for {file_path}, trying with errors='replace'")
-                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                    code = f.read()
+            # 1. Read Content
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                code = f.read()
             
-            # 3. Parse file using the new CodeParser
-            # This returns a list of CodeNode objects containing rich metadata
-            nodes: List[CodeNode] = self.parser.parse_file(file_path, code)
+            # 2. Parse
+            nodes = self.parser.parse_file(file_path, code)
             
             if not nodes:
-                logger.debug(f"No definitions found in {file_path}")
                 return "skipped"
 
-            documents = []
-            metadatas = []
-            ids = []
+            # 3. Generate IDs centrally
+            # This ensures all strategies use the same ID for the same node
+            self._assign_node_ids(nodes)
 
-            abs_path = os.path.abspath(file_path)
-            rel_path = os.path.relpath(file_path, self.root_path)
+            # 4. Delegate to Strategies
+            for strategy in self.strategies:
+                strategy.index(file_path, nodes)
+            
+            return "indexed"
 
-            for i, node in enumerate(nodes):
-                # 4. Construct embedding text
-                # Inject docstring/signature into the content to improve semantic search
-                parts = []
-                if node.docstring:
-                    parts.append(f"Docstring: {node.docstring}")
-                if node.signature:
-                    parts.append(f"Signature: {node.signature}")
-                if node.return_type:
-                    parts.append(f"Returns: {node.return_type}")
-                if node.arguments:
-                    parts.append(f"Parameters: {', '.join(node.arguments)}")
-                parts.append(f"Code:\n{node.content}")
-                embed_text = "\n\n".join(parts)
-
-                documents.append(embed_text)
-
-                # 5. Build metadata (Flatten lists to strings for vector DB compatibility)
-                metadata = {
-                    'file_path': abs_path,
-                    'project_root': self.root_path,
-                    'relative_path': rel_path,
-                    'name': node.name,
-                    'type': node.type,
-                    'language': node.language,
-                    'start_line': node.start_line,
-                    'end_line': node.end_line
-                }
-                
-                # Add optional fields if they exist
-                if node.parent_name:
-                    metadata['parent_name'] = node.parent_name
-
-                if node.signature:
-                    metadata['signature'] = node.signature
-                if node.return_type:
-                    metadata['return_type'] = node.return_type
-
-                # Join lists into strings (e.g., ['pandas', 'numpy'] -> "pandas, numpy")
-                if node.imports:
-                    metadata['imports'] = ", ".join(node.imports)[:1000] # Truncate for safety
-                if node.arguments:
-                    metadata['arguments'] = json.dumps(node.arguments)
-                
-                metadatas.append(metadata)
-                
-                # 6. Generate unique ID
-                # Format: "abs_path:kind:name:line:hash"
-                sig_seed = "|".join([
-                    node.signature or "",
-                    node.return_type or "",
-                    ",".join(node.arguments) if node.arguments else ""
-                ])
-                hash_input = f"{node.content}\n{sig_seed}".encode("utf-8", errors="replace")
-                short_hash = hashlib.sha1(hash_input).hexdigest()[:10]
-                base_id = f"{abs_path}:{node.type}:{node.name}:{node.start_line}:{short_hash}"
-
-                unique_id = base_id
-                suffix = 1
-                while unique_id in ids:
-                    suffix += 1
-                    unique_id = f"{base_id}:{suffix}"
-                ids.append(unique_id)
-                
-            # 7. Add to Vector Store
-            if documents:
-                self.vector_store.add_documents(documents, metadatas, ids)
-                return "indexed"
-                
         except Exception as e:
-            logger.error(f"Failed to index {file_path}: {type(e).__name__}: {e}")
+            logger.error(f"Failed to index {file_path}: {e}")
             return "error"
-        
-        return "skipped"
 
-    def _index_files(self, file_paths: List[str]):
+    def _assign_node_ids(self, nodes: List[CodeNode]):
+        """Generates and assigns unique IDs to nodes."""
+        ids = []
+        for node in nodes:
+            sig_seed = "|".join([
+                node.signature or "",
+                node.return_type or "",
+                ",".join(node.arguments) if node.arguments else ""
+            ])
+            hash_input = f"{node.content}\n{sig_seed}".encode("utf-8", errors="replace")
+            short_hash = hashlib.sha1(hash_input).hexdigest()[:10]
+            base_id = f"{node.file_path}:{node.type}:{node.name}:{node.start_line}:{short_hash}"
+
+            unique_id = base_id
+            suffix = 1
+            while unique_id in ids:
+                suffix += 1
+                unique_id = f"{base_id}:{suffix}"
+            ids.append(unique_id)
+            node.id = unique_id
+
+    def _index_files(self, file_paths: List[str]) -> Tuple[int, int, int]:
         indexed_count = 0
         skipped_count = 0
         error_count = 0
@@ -216,7 +171,6 @@ class CodeIndexer:
     def _discover_files(self) -> List[str]:
         all_files = []
         for root, _, files in os.walk(self.root_path):
-            # Skip hidden directories and build artifacts
             if any(part.startswith('.') for part in root.split(os.sep)):
                 continue
             if any(skip in root for skip in ['build', 'venv', '__pycache__', 'node_modules', '.git', 'dist', 'egg-info']):
@@ -228,7 +182,6 @@ class CodeIndexer:
                 if ext in self.supported_exts:
                     all_files.append(file_path)
         return all_files
-
 
     def _report_results(self, indexed_count: int, skipped_count: int, error_count: int) -> None:
         logger.info(f"Indexing complete. Indexed: {indexed_count}, Skipped: {skipped_count}, Errors: {error_count}")

@@ -7,7 +7,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import config
 from indexing.indexer import CodeIndexer
-from storage.vector_store import get_vector_store
+from indexing.storage.vector_store import get_vector_store
 from retrieval.search_engine import get_search_engine
 from agent.core import CodeAgent
 

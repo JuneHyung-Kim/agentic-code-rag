@@ -1,6 +1,6 @@
 from typing import List, Dict, Any
-from storage.vector_store import VectorStore
-from storage.keyword_store import KeywordStore
+from indexing.storage.vector_store import VectorStore
+from indexing.storage.keyword_store import KeywordStore
 from utils.logger import logger
 
 class SearchEngine:
@@ -10,12 +10,13 @@ class SearchEngine:
     """
     def __init__(self, vector_store: VectorStore = None):
         if vector_store is None:
-            from storage.vector_store import get_vector_store
+            from indexing.storage.vector_store import get_vector_store
             self.vector_store = get_vector_store()
         else:
             self.vector_store = vector_store
             
-        self.keyword_store = KeywordStore()
+        from indexing.storage.keyword_store import get_keyword_store
+        self.keyword_store = get_keyword_store()
         
         # Sync keyword store with vector store data on init
         self._sync_indices()

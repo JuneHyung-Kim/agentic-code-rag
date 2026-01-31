@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 try:
     from indexing.parser import CodeParser
-    from storage.vector_store import get_vector_store
+    from indexing.storage.vector_store import get_vector_store
 except ImportError as e:
     print(f"Error importing modules: {e}")
     print("Make sure you are running this script correctly from the project root or scripts directory.")
@@ -31,8 +31,10 @@ def _node_to_dict(node):
         "file_path": os.path.basename(node.file_path),
         "location": f"L{node.start_line + 1}-L{node.end_line + 1}",
         "signature": node.signature,
+        "function_calls": node.function_calls, # Added for verification
         "docstring_preview": (node.docstring[:50] + "...") if node.docstring else None,
-        "content_preview": node.content[:150].replace("\n", "\\n") + "..." if len(node.content) > 150 else node.content,
+        # Handle encoding for Windows console
+        "content_preview": (node.content[:150].replace("\n", "\\n") + "..." if len(node.content) > 150 else node.content).encode('ascii', 'replace').decode('ascii'),
     }
 
 
@@ -50,7 +52,7 @@ def inspect_file(file_path, output_file=None):
         print(f"Error reading file: {e}", file=sys.stderr)
         return
 
-    print(f"🔍 Parsing File: {abs_path}")
+    print(f"[INFO] Parsing File: {abs_path}")
     print(f"   Size: {len(code)} bytes")
     print("-" * 60)
 
@@ -58,7 +60,7 @@ def inspect_file(file_path, output_file=None):
         code_parser = CodeParser()
         nodes = code_parser.parse_file(abs_path, code)
     except Exception as e:
-        print(f"❌ Parser failed: {e}", file=sys.stderr)
+        print(f"[X] Parser failed: {e}", file=sys.stderr)
         return
 
     payload = [_node_to_dict(n) for n in nodes]
@@ -67,7 +69,7 @@ def inspect_file(file_path, output_file=None):
 
 def inspect_db_samples(n_samples, output_file=None):
     """Fetches random samples from the Vector DB."""
-    print(f"🔍 Inspecting Vector Database (Random {n_samples} samples)...")
+    print(f"[INFO] Inspecting Vector Database (Random {n_samples} samples)...")
     
     try:
         store = get_vector_store()
@@ -75,14 +77,14 @@ def inspect_db_samples(n_samples, output_file=None):
         all_data = store.collection.get(include=['metadatas', 'documents'])
         total_docs = len(all_data['ids'])
     except Exception as e:
-        print(f"❌ Failed to connect to DB: {e}")
+        print(f"[X] Failed to connect to DB: {e}")
         return
 
     if total_docs == 0:
         print("❌ Database is empty. Run indexing first.")
         return
 
-    print(f"📚 Total indexed documents: {total_docs}")
+    print(f"[INFO] Total indexed documents: {total_docs}")
     
     # Random sampling
     sample_indices = random.sample(range(total_docs), min(n_samples, total_docs))
@@ -115,9 +117,9 @@ def _output_results(payload, output_file):
     if output_file:
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
-        print(f"✅ Results saved to {output_file}")
+        print(f"[OK] Results saved to {output_file}")
     else:
-        print(f"✅ Retrieved {len(payload)} items:\n")
+        print(f"[OK] Retrieved {len(payload)} items:\n")
         for i, item in enumerate(payload):
             print(f"[{i+1}] {item['type']} : {item['name']}")
             print(f"    File: {item['file_path']}")
@@ -126,6 +128,10 @@ def _output_results(payload, output_file):
                 print(f"    Parent: {item['parent_name']}")
             if item.get('signature'):
                 print(f"    Sig : {item['signature']}")
+            if item.get('function_calls'):
+                 # Sanitize calls for printing
+                 safe_calls = [str(c).encode('ascii', 'replace').decode('ascii') for c in item['function_calls']]
+                 print(f"    Calls : {safe_calls[:5]} ... ({len(safe_calls)} total)")
             print(f"    Preview: {item['content_preview']}")
             print("-" * 40)
 

@@ -9,6 +9,7 @@ class CppParser:
         self.language = language
         self.lang_type = lang_type  # 'c' or 'cpp'
         self._node_types = self._load_node_types()
+        self._call_query = self._build_call_query()
 
     def _load_node_types(self) -> Set[str]:
         node_types = set()
@@ -99,6 +100,7 @@ class CppParser:
                 continue
             return_type = self._extract_return_type(node, code, capture_type) if capture_type in ['function', 'function_decl'] else None
             arguments = self._extract_arguments(node, code) if capture_type in ['function', 'function_decl'] else []
+            calls = self._extract_function_calls(node, code) if capture_type in ['function', 'function_decl'] else []
             parent_name = self._extract_parent_name(node, name, code, capture_type) if capture_type in ['function', 'function_decl'] else None
             
             code_node = CodeNode(
@@ -114,7 +116,8 @@ class CppParser:
                 return_type=return_type,
                 signature=signature,
                 parent_name=parent_name,
-                imports=includes
+                imports=includes,
+                function_calls=calls
             )
             nodes.append(code_node)
             
@@ -332,3 +335,23 @@ class CppParser:
         else:
             for node, name in captures:
                 yield node, name
+
+    def _build_call_query(self) -> Optional[Query]:
+        if not self._has_node_type("call_expression"):
+            return None
+        return Query(self.language, "(call_expression function: (_) @call)")
+
+    def _extract_function_calls(self, node: Node, code: str) -> List[str]:
+        calls = set()
+        if not self._call_query:
+            return []
+        
+        cursor = QueryCursor(self._call_query)
+        captures = cursor.captures(node)
+        
+        for captured_node, _ in self._iter_captures(captures):
+            text = self._get_text(captured_node, code)
+            if text:
+                calls.add(text)
+        
+        return list(calls)

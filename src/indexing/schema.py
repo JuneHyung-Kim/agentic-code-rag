@@ -37,9 +37,11 @@ class CodeNode:
     
     # Dependencies
     imports: List[str] = field(default_factory=list)    # import/include statements
+    function_calls: List[str] = field(default_factory=list) # calls made within this node
     
     # Extension
     metadata: Dict[str, Any] = field(default_factory=dict)
+    id: Optional[str] = None # Unique ID assigned by Indexer
 
     @property
     def node_id(self) -> str:

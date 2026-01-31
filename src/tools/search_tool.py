@@ -1,5 +1,5 @@
 from typing import Dict, Any
-from storage.vector_store import VectorStore
+from indexing.storage.vector_store import VectorStore
 from retrieval.search_engine import get_search_engine
 
 class SearchTool:

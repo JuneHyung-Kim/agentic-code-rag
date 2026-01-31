@@ -10,7 +10,7 @@ class KeywordStore:
     """
     def __init__(self):
         self.bm25 = None
-        self.doc_ids = []
+        self.documents = {} # id -> text mapping
         self._is_ready = False
 
     def _tokenize(self, text: str) -> List[str]:
@@ -23,7 +23,7 @@ class KeywordStore:
 
     def build_index(self, documents: List[str], doc_ids: List[str]):
         """
-        Build or rebuild the BM25 index.
+        Build or rebuild the BM25 index from scratch.
         """
         if not documents:
             logger.warning("No documents provided to build BM25 index.")
@@ -33,14 +33,45 @@ class KeywordStore:
         logger.info(f"Building BM25 index for {len(documents)} documents...")
         
         try:
-            self.doc_ids = doc_ids
-            tokenized_corpus = [self._tokenize(doc) for doc in documents]
-            self.bm25 = BM25Okapi(tokenized_corpus)
-            self._is_ready = True
+            self.documents = {doc_id: doc for doc_id, doc in zip(doc_ids, documents)}
+            self._rebuild_index()
             logger.info("BM25 index built successfully.")
         except Exception as e:
             logger.error(f"Failed to build BM25 index: {e}")
             self._is_ready = False
+
+    def add_documents(self, documents: List[str], doc_ids: List[str]):
+        """Add new documents and rebuild index."""
+        if not documents: return
+        
+        for doc, doc_id in zip(documents, doc_ids):
+            self.documents[doc_id] = doc
+        
+        self._rebuild_index()
+
+    def delete_documents(self, doc_ids: List[str]):
+        """Remove documents and rebuild index."""
+        if not doc_ids: return
+        
+        changed = False
+        for doc_id in doc_ids:
+            if doc_id in self.documents:
+                del self.documents[doc_id]
+                changed = True
+        
+        if changed:
+            self._rebuild_index()
+
+    def _rebuild_index(self):
+        """Internal method to rebuild BM25 from self.documents"""
+        if not self.documents:
+            self.bm25 = None
+            self._is_ready = False
+            return
+
+        tokenized_corpus = [self._tokenize(doc) for doc in self.documents.values()]
+        self.bm25 = BM25Okapi(tokenized_corpus)
+        self._is_ready = True
 
     def search(self, query: str) -> Dict[str, float]:
         """
@@ -55,8 +86,18 @@ class KeywordStore:
         scores = self.bm25.get_scores(tokenized_query)
         
         score_map = {}
-        for doc_id, score in zip(self.doc_ids, scores):
+        doc_ids = list(self.documents.keys())
+        for doc_id, score in zip(doc_ids, scores):
             if score > 0:
                 score_map[doc_id] = score
                 
         return score_map
+
+# Singleton instance
+_keyword_store_instance = None
+
+def get_keyword_store() -> KeywordStore:
+    global _keyword_store_instance
+    if _keyword_store_instance is None:
+        _keyword_store_instance = KeywordStore()
+    return _keyword_store_instance

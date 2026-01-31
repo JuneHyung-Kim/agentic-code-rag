@@ -9,6 +9,7 @@ class PythonParser:
         self._node_types = self._load_node_types()
         self._definition_query = self._build_definition_query()
         self._import_query = self._build_import_query()
+        self._call_query = self._build_call_query()
 
     def _load_node_types(self) -> Set[str]:
         node_types = set()
@@ -98,7 +99,8 @@ class PythonParser:
             
             # Extract arguments
             args = self._extract_arguments(node, code) if capture_type == 'function' else []
-            
+            calls = self._extract_function_calls(node, code) if capture_type in ['function', 'method'] else []
+
             parent_name = self._find_parent_class(node, code) if capture_type == 'function' else None
             if capture_type == 'assignment':
                 node_type = "global_var"
@@ -119,7 +121,8 @@ class PythonParser:
                 return_type=return_type,
                 signature=signature,
                 parent_name=parent_name,
-                imports=file_imports  # Share file-level imports
+                imports=file_imports,  # Share file-level imports,
+                function_calls=calls
             )
             nodes.append(code_node)
             
@@ -223,4 +226,24 @@ class PythonParser:
     def _get_text(self, node: Node, code: str) -> str:
         if not node:
             return ""
-        return code[node.start_byte:node.end_byte]
+        return bytes(code, "utf8")[node.start_byte:node.end_byte].decode("utf8")
+
+    def _build_call_query(self) -> Optional[Query]:
+        if not self._has_node_type("call"):
+            return None
+        return Query(self.language, "(call function: (_) @call)")
+
+    def _extract_function_calls(self, node: Node, code: str) -> List[str]:
+        calls = set()
+        if not self._call_query:
+            return []
+        
+        cursor = QueryCursor(self._call_query)
+        captures = cursor.captures(node)
+        
+        for captured_node, _ in self._iter_captures(captures):
+            text = self._get_text(captured_node, code)
+            if text:
+                calls.add(text)
+        
+        return list(calls)
