@@ -32,10 +32,19 @@ class CodeIndexer:
         self.parser = CodeParser()
         self.supported_exts = {'.py', '.c', '.h', '.cpp', '.hpp', '.cc', '.cxx'}
         
+        
         # Initialize Stores (Singletons)
         self.vector_store = get_vector_store()
         self.keyword_store = get_keyword_store()
         self.graph_store = get_graph_store()
+
+        # Load persisted data for Graph and Keyword stores
+        self.graph_path = os.path.join(self.persist_path, "graph_store.pkl")
+        self.keyword_path = os.path.join(self.persist_path, "keyword_store.pkl")
+        
+        self.graph_store.load(self.graph_path)
+        self.keyword_store.load(self.keyword_path)
+
         
         # Initialize Strategies
         self.strategies = [
@@ -92,6 +101,10 @@ class CodeIndexer:
         # 8. Update Registry
         update_project_files(registry, self.root_path, current_files)
         save_registry(self.registry_path, registry)
+        
+        # 9. Save Stores
+        self.graph_store.save(self.graph_path)
+        self.keyword_store.save(self.keyword_path)
 
         self._report_results(indexed_count, skipped_count, error_count)
                 

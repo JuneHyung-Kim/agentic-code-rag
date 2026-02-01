@@ -50,6 +50,34 @@ class GraphStore:
     def clear(self):
         self.graph.clear()
 
+    def save(self, path: str):
+        """Save graph to disk."""
+        import pickle
+        import os
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            with open(path, "wb") as f:
+                pickle.dump(self.graph, f)
+            logger.info(f"Graph saved to {path}")
+        except Exception as e:
+            logger.error(f"Failed to save graph: {e}")
+
+    def load(self, path: str):
+        """Load graph from disk."""
+        import pickle
+        import os
+        if not os.path.exists(path):
+            logger.info(f"No existing graph found at {path}, starting fresh.")
+            return
+
+        try:
+            with open(path, "rb") as f:
+                self.graph = pickle.load(f)
+            logger.info(f"Graph loaded from {path} with {self.graph.number_of_nodes()} nodes")
+        except Exception as e:
+            logger.error(f"Failed to load graph: {e}")
+            self.graph = nx.DiGraph()
+
 # Singleton instance
 _graph_store_instance = None
 

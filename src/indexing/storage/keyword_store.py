@@ -92,6 +92,41 @@ class KeywordStore:
                 score_map[doc_id] = score
                 
         return score_map
+    
+    def save(self, path: str):
+        """Save keyword index to disk."""
+        import pickle
+        import os
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            with open(path, "wb") as f:
+                # We save documents. BM25 object is not easily picklable if it contains lambdas,
+                # but rank_bm25 objects usually are. 
+                # Ideally we just save documents and rebuild, but rebuilding is fast enough?
+                # For safety, let's save documents and rebuild on load to avoid pickle issues with version changes of rank_bm25
+                # Actually, rebuilding 10k docs is fast.
+                pickle.dump(self.documents, f)
+            logger.info(f"Keyword index documents saved to {path} ({len(self.documents)} docs)")
+        except Exception as e:
+            logger.error(f"Failed to save keyword index: {e}")
+
+    def load(self, path: str):
+        """Load keyword index from disk."""
+        import pickle
+        import os
+        if not os.path.exists(path):
+            logger.info(f"No existing keyword index found at {path}")
+            return
+
+        try:
+            with open(path, "rb") as f:
+                self.documents = pickle.load(f)
+            logger.info(f"Keyword documents loaded from {path}. Rebuilding index...")
+            self._rebuild_index()
+        except Exception as e:
+            logger.error(f"Failed to load keyword index: {e}")
+            self.documents = {}
+            self._is_ready = False
 
 # Singleton instance
 _keyword_store_instance = None
