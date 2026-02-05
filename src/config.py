@@ -21,7 +21,11 @@ class AgentConfig:
         
         # Ollama Configuration
         self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        
+
+        # Agent loop configuration
+        self.max_iterations = int(os.getenv("MAX_ITERATIONS", "10"))  # Max planner-executor-refinery cycles
+        self.max_executor_steps = int(os.getenv("MAX_EXECUTOR_STEPS", "5"))  # Max ReAct steps per execution
+
         # Legacy support (deprecated but kept for backward compatibility)
         legacy_provider = os.getenv("MODEL_PROVIDER")
         if legacy_provider and not os.getenv("CHAT_PROVIDER"):

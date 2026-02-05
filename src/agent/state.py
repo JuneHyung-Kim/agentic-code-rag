@@ -1,11 +1,28 @@
-from typing import List, Dict, Any, TypedDict, Annotated
+from typing import List, Dict, Any, TypedDict, Annotated, Literal
 import operator
 from langchain_core.messages import BaseMessage
+
+
+class ExecutorStep(TypedDict):
+    """
+    A single step in the ReAct executor loop.
+
+    Attributes:
+        thought: LLM's reasoning about what to do next
+        action: The tool name to invoke
+        action_input: Arguments passed to the tool
+        observation: The result returned by the tool
+    """
+    thought: str
+    action: str
+    action_input: Dict[str, Any]
+    observation: str
+
 
 class AgentState(TypedDict):
     """
     State for the Code RAG Agent.
-    
+
     Attributes:
         input (str): The original user query.
         chat_history (List[BaseMessage]): Previous conversation history + current session.
@@ -14,6 +31,9 @@ class AgentState(TypedDict):
         findings (Dict[str, Any]): Key-value store of evidence gathered from tool execution.
                                    Also acts as the 'long-term memory' for the session.
         response (str): The final answer to appear in the chat.
+        loop_decision (Literal["CONTINUE", "FINISH"]): Decision from refinery node.
+        executor_steps (List[ExecutorStep]): ReAct loop history for current execution.
+        iteration_count (int): Number of planner-executor-refinery cycles (for infinite loop prevention).
     """
     input: str
     chat_history: Annotated[List[BaseMessage], operator.add]
@@ -21,4 +41,6 @@ class AgentState(TypedDict):
     current_step: int
     findings: Dict[str, Any]
     response: str
-    loop_decision: str # "CONTINUE" or "FINISH"
+    loop_decision: Literal["CONTINUE", "FINISH"]
+    executor_steps: List[ExecutorStep]
+    iteration_count: int
