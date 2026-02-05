@@ -86,7 +86,6 @@ def _execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> str:
     """Execute a tool and return the result as a string."""
     search_tool = SearchTool()
     fs_tool = FileSystemTools(config.project_root)
-    # TODO: Add RelatedCodeTool once get_callers/get_callees are implemented
 
     try:
         if tool_name == "search_codebase":

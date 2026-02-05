@@ -25,7 +25,7 @@ class GraphStore:
         """
         if node_id not in self.graph:
             return []
-        
+
         # Get successors (called functions) and predecessors (callers)
         # For simple context, we just return immediate neighbors
         neighbors = set()
@@ -36,8 +36,54 @@ class GraphStore:
             neighbors.update(self.graph.predecessors(node_id))
         except Exception:
             pass
-            
+
         return list(neighbors)
+
+    def get_callers(self, function_name: str) -> List[Dict[str, Any]]:
+        """
+        Find functions that call the given function.
+        Returns list of caller info with node attributes.
+        """
+        callers = []
+        # Find nodes matching the function name
+        target_nodes = [
+            n for n in self.graph.nodes()
+            if n.endswith(f":{function_name}") or n == function_name
+        ]
+
+        for target in target_nodes:
+            for caller in self.graph.predecessors(target):
+                node_data = self.graph.nodes.get(caller, {})
+                callers.append({
+                    "node_id": caller,
+                    "file_path": node_data.get("file_path", ""),
+                    "name": node_data.get("name", caller),
+                    "type": node_data.get("type", "unknown")
+                })
+        return callers
+
+    def get_callees(self, function_name: str) -> List[Dict[str, Any]]:
+        """
+        Find functions that the given function calls.
+        Returns list of callee info with node attributes.
+        """
+        callees = []
+        # Find nodes matching the function name
+        source_nodes = [
+            n for n in self.graph.nodes()
+            if n.endswith(f":{function_name}") or n == function_name
+        ]
+
+        for source in source_nodes:
+            for callee in self.graph.successors(source):
+                node_data = self.graph.nodes.get(callee, {})
+                callees.append({
+                    "node_id": callee,
+                    "file_path": node_data.get("file_path", ""),
+                    "name": node_data.get("name", callee),
+                    "type": node_data.get("type", "unknown")
+                })
+        return callees
 
     def delete_by_file(self, file_path: str):
         """Remove all nodes belonging to a specific file."""
