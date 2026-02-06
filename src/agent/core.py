@@ -29,17 +29,19 @@ class CodeAgent:
         Main entry point for the agent.
         """
         inputs = {
-            "input": user_input, 
+            "input": user_input,
             "chat_history": self.chat_history,
             "plan": [],
             "current_step": 0,
-            "findings": {}
+            "findings": {},
+            "messages": [],
+            "executor_call_count": 0,
         }
         
         try:
             # Run the graph
             # recursion_limit protects against infinite loops
-            final_state = self.app.invoke(inputs, config={"recursion_limit": 25})
+            final_state = self.app.invoke(inputs, config={"recursion_limit": 150})
             
             response = final_state.get("response", "I could not generate a response.")
             

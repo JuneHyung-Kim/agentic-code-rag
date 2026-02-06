@@ -13,6 +13,22 @@ This project serves as a **Code Knowledge Expert Agent** in multi-agent systems:
 
 ---
 
+## Prerequisites: Native Tool Calling Support Required
+
+This agent uses LangGraph's **ToolNode**, which requires the LLM to invoke tools directly. You must use a model that supports **Native Tool Calling**.
+
+**What is Native Tool Calling?**
+Unlike regular LLMs that only generate text, native tool calling models are **trained from the ground up to know how to use tools**. They can decide when to call a tool, output structured tool calls (name + JSON arguments) through a dedicated channel, and process the results — all learned during the training phase, not through prompt engineering hacks.
+
+| Provider | Supported Models | Notes |
+|----------|-----------------|-------|
+| **Gemini** | `gemini-1.5-flash`, `gemini-1.5-pro`, `gemini-2.0-flash` | Natively supported |
+| **Ollama** | `llama3.2`, `qwen2.5`, etc. | Varies by model — check the **Tools** tag on [Ollama models](https://ollama.com/search?c=tools) |
+
+> **Warning**: Models without tool calling support (e.g. `deepseek-r1`, `phi-3`) will not work — the agent will fail to invoke any tools.
+
+---
+
 ## Quick Start
 
 ```bash

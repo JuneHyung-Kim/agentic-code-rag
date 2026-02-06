@@ -8,6 +8,7 @@ from config import config
 logger = logging.getLogger(__name__)
 
 _model_instance = None
+_model_with_tools_instance = None
 
 
 def get_model():
@@ -38,7 +39,20 @@ def get_model():
     return _model_instance
 
 
+def get_model_with_tools():
+    """Get LLM instance with tools bound (singleton pattern)."""
+    global _model_with_tools_instance
+    if _model_with_tools_instance is not None:
+        return _model_with_tools_instance
+
+    from agent.tools import get_tools
+
+    _model_with_tools_instance = get_model().bind_tools(get_tools())
+    return _model_with_tools_instance
+
+
 def reset_model():
-    """Reset the model singleton. Useful for testing or dynamic config changes."""
-    global _model_instance
+    """Reset the model singletons. Useful for testing or dynamic config changes."""
+    global _model_instance, _model_with_tools_instance
     _model_instance = None
+    _model_with_tools_instance = None

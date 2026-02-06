@@ -27,36 +27,23 @@ PLAN_PROMPT = ChatPromptTemplate.from_messages([
     ("user", "User Request: {input}\n\nExisting Findings:\n{findings}"),
 ])
 
-# -- ReAct Executor Node --
-# NOTE: This template contains {tools} and {findings} placeholders that are
-# filled at runtime via .format(), not via LangChain invoke variables.
+# -- Executor Node (native tool calling) --
 
-REACT_SYSTEM = """\
+EXECUTOR_SYSTEM = """\
 You are a code research assistant executing a specific task.
-Your current task: {current_step}
+Use the available tools to gather the information needed.
 
-Available tools:
-{tools}
-
-Instructions:
-1. Think about what information you need
-2. Choose a tool to gather that information
-3. After receiving observations, decide if you need more info or can finish
-
-Return a JSON object with:
-- "thought": Your reasoning about what to do next
-- "action": The tool name to use
-- "action_input": Object with the tool parameters
-
-When you have gathered enough information for this step, use the "finish" tool.
-
-Previous findings from earlier steps:
-{findings}"""
-
-REACT_USER = """\
 Current task: {current_step}
 
-{history_section}"""
+Previous findings from earlier steps:
+{findings}
+
+Instructions:
+- Use tools to gather information for the current task.
+- Call multiple tools if needed to fully address the task.
+- When you have gathered enough information, stop calling tools and summarize what you found."""
+
+EXECUTOR_USER = "Execute this research task: {current_step}"
 
 # -- Refine Node --
 

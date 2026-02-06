@@ -1,22 +1,8 @@
 from typing import List, Dict, Any, TypedDict, Annotated, Literal
 import operator
+
 from langchain_core.messages import BaseMessage
-
-
-class ExecutorStep(TypedDict):
-    """
-    A single step in the ReAct executor loop.
-
-    Attributes:
-        thought: LLM's reasoning about what to do next
-        action: The tool name to invoke
-        action_input: Arguments passed to the tool
-        observation: The result returned by the tool
-    """
-    thought: str
-    action: str
-    action_input: Dict[str, Any]
-    observation: str
+from langgraph.graph.message import add_messages
 
 
 class AgentState(TypedDict):
@@ -32,15 +18,17 @@ class AgentState(TypedDict):
                                    Also acts as the 'long-term memory' for the session.
         response (str): The final answer to appear in the chat.
         loop_decision (Literal["CONTINUE", "FINISH"]): Decision from refinery node.
-        executor_steps (List[ExecutorStep]): ReAct loop history for current execution.
+        messages (List[BaseMessage]): ToolNode loop messages (executor_llm ↔ tool_node).
+        executor_call_count (int): Number of executor LLM calls in current step (for max_executor_steps).
         iteration_count (int): Number of planner-executor-refinery cycles (for infinite loop prevention).
     """
     input: str
-    chat_history: Annotated[List[BaseMessage], operator.add]
+    chat_history: Annotated[List[BaseMessage], add_messages]
     plan: List[str]
     current_step: int
     findings: Dict[str, Any]
     response: str
     loop_decision: Literal["CONTINUE", "FINISH"]
-    executor_steps: List[ExecutorStep]
+    messages: Annotated[List[BaseMessage], add_messages]
+    executor_call_count: int
     iteration_count: int
