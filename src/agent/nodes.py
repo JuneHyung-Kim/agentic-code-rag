@@ -9,6 +9,7 @@ from config import config
 from agent.state import AgentState, ExecutorStep
 from tools.search_tool import SearchTool
 from tools.structure import FileSystemTools
+from tools.related import RelatedCodeTool
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,15 @@ def get_model():
             temperature=0
         )
     else:
-        raise ValueError(f"Unsupported provider for LangGraph: {config.chat_provider}")
+        raise ValueError(f"Unsupported chat provider: {config.chat_provider}. Must be 'gemini' or 'ollama'.")
 
     return _model_instance
+
+
+def reset_model():
+    """Reset the model singleton. Useful for testing or dynamic config changes."""
+    global _model_instance
+    _model_instance = None
 
 
 # -- Tool Registry --
@@ -63,6 +70,18 @@ AVAILABLE_TOOLS = {
             "path": "The directory path to list (use '.' for root)"
         }
     },
+    "get_callers": {
+        "description": "Find functions that call the given function. Use to understand who uses a function.",
+        "parameters": {
+            "function_name": "The name of the function to find callers for"
+        }
+    },
+    "get_callees": {
+        "description": "Find functions that the given function calls. Use to understand dependencies.",
+        "parameters": {
+            "function_name": "The name of the function to find callees for"
+        }
+    },
     "finish": {
         "description": "Signal that you have gathered enough information for the current plan step. "
                        "Use when observations provide sufficient context.",
@@ -82,10 +101,35 @@ def _format_tools_for_prompt() -> str:
     return "\n".join(lines)
 
 
+# -- Tool Instances (Singleton) --
+_search_tool = None
+_fs_tool = None
+_related_tool = None
+
+
+def _get_tools():
+    """Get or create tool instances (singleton pattern)."""
+    global _search_tool, _fs_tool, _related_tool
+    if _search_tool is None:
+        _search_tool = SearchTool()
+    if _fs_tool is None:
+        _fs_tool = FileSystemTools(config.project_root)
+    if _related_tool is None:
+        _related_tool = RelatedCodeTool()
+    return _search_tool, _fs_tool, _related_tool
+
+
+def reset_tools():
+    """Reset tool singletons. Useful for testing or when project_root changes."""
+    global _search_tool, _fs_tool, _related_tool
+    _search_tool = None
+    _fs_tool = None
+    _related_tool = None
+
+
 def _execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> str:
     """Execute a tool and return the result as a string."""
-    search_tool = SearchTool()
-    fs_tool = FileSystemTools(config.project_root)
+    search_tool, fs_tool, related_tool = _get_tools()
 
     try:
         if tool_name == "search_codebase":
@@ -100,6 +144,14 @@ def _execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> str:
         elif tool_name == "list_directory":
             path = tool_input.get("path", ".")
             return fs_tool.list_dir(path)
+
+        elif tool_name == "get_callers":
+            function_name = tool_input.get("function_name", "")
+            return related_tool.get_callers(function_name)
+
+        elif tool_name == "get_callees":
+            function_name = tool_input.get("function_name", "")
+            return related_tool.get_callees(function_name)
 
         elif tool_name == "finish":
             summary = tool_input.get("summary", "Research complete.")

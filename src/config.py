@@ -8,7 +8,6 @@ load_dotenv()
 class AgentConfig:
     def __init__(self):
         # API Keys
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
         
         # Embedding Model Configuration
@@ -38,29 +37,23 @@ class AgentConfig:
     
     def validate_embedding_config(self) -> None:
         """Validate embedding configuration."""
-        if self.embedding_provider not in ["openai", "gemini", "default", "ollama"]:
+        if self.embedding_provider not in ["gemini", "default", "ollama"]:
             raise ValueError(
                 f"Invalid EMBEDDING_PROVIDER: {self.embedding_provider}. "
-                f"Must be one of: openai, gemini, default, ollama"
+                f"Must be one of: gemini, default, ollama"
             )
-        
-        if self.embedding_provider == "openai" and not self.openai_api_key:
-            raise ValueError("EMBEDDING_PROVIDER is 'openai' but OPENAI_API_KEY is not set")
-        
+
         if self.embedding_provider == "gemini" and not self.gemini_api_key:
             raise ValueError("EMBEDDING_PROVIDER is 'gemini' but GEMINI_API_KEY is not set")
     
     def validate_chat_config(self) -> None:
         """Validate chat configuration."""
-        if self.chat_provider not in ["openai", "gemini", "ollama"]:
+        if self.chat_provider not in ["gemini", "ollama"]:
             raise ValueError(
                 f"Invalid CHAT_PROVIDER: {self.chat_provider}. "
-                f"Must be one of: openai, gemini, ollama"
+                f"Must be one of: gemini, ollama"
             )
-        
-        if self.chat_provider == "openai" and not self.openai_api_key:
-            raise ValueError("CHAT_PROVIDER is 'openai' but OPENAI_API_KEY is not set")
-        
+
         if self.chat_provider == "gemini" and not self.gemini_api_key:
             raise ValueError("CHAT_PROVIDER is 'gemini' but GEMINI_API_KEY is not set")
 

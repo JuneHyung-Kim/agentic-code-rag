@@ -1,6 +1,8 @@
 import logging
 from typing import Dict, Any, List
 
+from langchain_core.messages import HumanMessage, AIMessage
+
 from config import config
 from agent.graph import define_graph
 
@@ -41,10 +43,9 @@ class CodeAgent:
             
             response = final_state.get("response", "I could not generate a response.")
             
-            # Update history (optional, if we want to carry over context, 
-            # but current design is per-query focused)
-            self.chat_history.append(("user", user_input))
-            self.chat_history.append(("ai", response))
+            # Update history for multi-turn conversations
+            self.chat_history.append(HumanMessage(content=user_input))
+            self.chat_history.append(AIMessage(content=response))
             
             return response
             
