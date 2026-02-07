@@ -1,3 +1,5 @@
+import os
+import pickle
 import re
 from typing import List, Dict, Any
 from rank_bm25 import BM25Okapi
@@ -95,8 +97,6 @@ class KeywordStore:
     
     def save(self, path: str):
         """Save keyword index to disk."""
-        import pickle
-        import os
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             with open(path, "wb") as f:
@@ -112,8 +112,6 @@ class KeywordStore:
 
     def load(self, path: str):
         """Load keyword index from disk."""
-        import pickle
-        import os
         if not os.path.exists(path):
             logger.info(f"No existing keyword index found at {path}")
             return

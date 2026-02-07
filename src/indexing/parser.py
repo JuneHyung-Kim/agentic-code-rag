@@ -48,11 +48,3 @@ class CodeParser:
         else:
             logger.debug(f"Unsupported file extension: {ext}")
             return []
-
-    # Compatibility method for existing indexer.py (if needed)
-    # Once indexer.py is updated, this can be removed.
-    def extract_definitions(self, code: str, language: str) -> List[dict]:
-        """Legacy support wrapper. Deprecated."""
-        # This is just for backward compatibility during migration
-        # In the new architecture, use parse_file() instead.
-        return []

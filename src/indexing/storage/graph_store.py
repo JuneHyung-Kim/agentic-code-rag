@@ -1,3 +1,5 @@
+import os
+import pickle
 import networkx as nx
 from typing import List, Dict, Any, Optional
 from utils.logger import logger
@@ -34,8 +36,8 @@ class GraphStore:
             neighbors.update(self.graph.successors(node_id))
             # Incoming edges (called by)
             neighbors.update(self.graph.predecessors(node_id))
-        except Exception:
-            pass
+        except nx.NetworkXError as e:
+            logger.warning(f"Failed to get neighbors for {node_id}: {e}")
 
         return list(neighbors)
 
@@ -98,8 +100,6 @@ class GraphStore:
 
     def save(self, path: str):
         """Save graph to disk."""
-        import pickle
-        import os
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             with open(path, "wb") as f:
@@ -110,8 +110,6 @@ class GraphStore:
 
     def load(self, path: str):
         """Load graph from disk."""
-        import pickle
-        import os
         if not os.path.exists(path):
             logger.info(f"No existing graph found at {path}, starting fresh.")
             return
