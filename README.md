@@ -73,6 +73,35 @@ black src/
 mypy src/
 ```
 
+### Testing
+
+```bash
+# Graph structure + tool registration + node units + E2E (mock-based, no API keys needed)
+pytest tests/test_agent_graph.py tests/test_agent_tools.py tests/test_agent_nodes.py tests/test_agent_e2e.py -v
+
+# Live LLM tests (requires API keys, prompts user for confirmation before calling)
+pytest tests/test_agent_e2e.py -m live -s -v
+```
+
+### Visualization & Monitoring
+
+```bash
+# Graph visualization — print Mermaid diagram to stdout (no API keys needed)
+python scripts/visualize_graph.py --mermaid
+
+# Save as PNG (uses external Mermaid rendering API)
+python scripts/visualize_graph.py --png graph.png
+
+# ASCII art in terminal (requires grandalf package)
+python scripts/visualize_graph.py --ascii
+
+# Real-time agent execution monitoring (requires API keys)
+python scripts/monitor_agent.py "How does the search engine work?"
+
+# Verbose mode — full state dump at each node
+python scripts/monitor_agent.py "How does the search engine work?" --verbose
+```
+
 ---
 
 ## License

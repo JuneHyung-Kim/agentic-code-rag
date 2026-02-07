@@ -40,6 +40,11 @@ dev = [
 requires = ["setuptools>=65.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.pytest.ini_options]
+markers = [
+    "live: tests that make real LLM API calls (deselected by default, run with: pytest -m live -s)",
+]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
