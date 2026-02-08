@@ -13,6 +13,9 @@ EXPECTED_TOOL_NAMES = {
     "list_directory",
     "get_callers",
     "get_callees",
+    "get_symbol_definition",
+    "get_call_chain",
+    "get_module_summary",
 }
 
 
@@ -21,7 +24,7 @@ class TestToolRegistration:
 
     def test_get_tools_returns_five_tools(self):
         tools = get_tools()
-        assert len(tools) == 5
+        assert len(tools) == 8
 
     def test_tool_names(self):
         tools = get_tools()
@@ -44,5 +47,5 @@ class TestToolRegistration:
         reset_tools()
         # After reset, get_tools() should still work (recreates singletons lazily)
         tools = get_tools()
-        assert len(tools) == 5
+        assert len(tools) == 8
         reset_tools()  # clean up

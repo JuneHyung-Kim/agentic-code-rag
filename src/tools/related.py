@@ -58,6 +58,32 @@ class RelatedCodeTool:
 
         return "\n".join(lines)
 
+    def get_call_chain(
+        self, function_name: str, direction: str = "callees", max_depth: int = 3
+    ) -> str:
+        """Trace an N-hop call chain and return a tree-formatted string."""
+        chain = self.graph_store.get_call_chain(
+            function_name, direction=direction, max_depth=max_depth
+        )
+
+        if not chain:
+            return (
+                f"No call chain found for '{function_name}' "
+                f"(direction={direction}). The function may not be indexed."
+            )
+
+        lines = [
+            f"Call chain ({direction}) for '{function_name}' (max depth {max_depth}):"
+        ]
+        for entry in chain:
+            indent = "  " * entry["depth"]
+            name = entry["name"]
+            sym_type = entry["type"]
+            file_path = entry.get("file_path", "unknown")
+            lines.append(f"{indent}{name} ({sym_type}) in {file_path}")
+
+        return "\n".join(lines)
+
     def get_related(self, symbol_name: str) -> str:
         """
         Find related code (callers, callees) for a given symbol name.

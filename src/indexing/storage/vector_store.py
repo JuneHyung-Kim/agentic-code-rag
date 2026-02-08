@@ -68,6 +68,15 @@ class VectorStore:
             kwargs["where"] = where_filter
         return self.collection.query(**kwargs)
 
+    def get_by_metadata(self, where_filter: Dict, limit: int = 100) -> Dict[str, Any]:
+        """Retrieve documents by exact metadata match (no embedding query)."""
+        try:
+            result = self.collection.get(where=where_filter, limit=limit)
+            return result if result and result.get("ids") else {}
+        except Exception as e:
+            logger.error(f"get_by_metadata failed: {e}")
+            return {}
+
     def get_all_documents(self) -> Dict[str, Any]:
         """Retrieve all documents for syncing with other stores."""
         count = self.collection.count()

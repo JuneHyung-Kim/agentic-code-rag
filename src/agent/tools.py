@@ -13,6 +13,7 @@ from config import config
 from tools.search_tool import SearchTool
 from tools.structure import FileSystemTools
 from tools.related import RelatedCodeTool
+from tools.symbol import SymbolTool
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,12 @@ def _get_related_tool() -> RelatedCodeTool:
     if "related" not in _instances:
         _instances["related"] = RelatedCodeTool()
     return _instances["related"]
+
+
+def _get_symbol_tool() -> SymbolTool:
+    if "symbol" not in _instances:
+        _instances["symbol"] = SymbolTool()
+    return _instances["symbol"]
 
 
 def reset_tools() -> None:
@@ -78,9 +85,45 @@ def get_callees(function_name: str) -> str:
     return _get_related_tool().get_callees(function_name)
 
 
+@tool
+def get_symbol_definition(symbol_name: str, symbol_type: str = "") -> str:
+    """Look up the exact definition of a symbol by name. Returns source location and code.
+    Use when you need the precise definition rather than a semantic search."""
+    return _get_symbol_tool().get_symbol_definition(
+        symbol_name, symbol_type=symbol_type or None
+    )
+
+
+@tool
+def get_call_chain(
+    function_name: str, direction: str = "callees", max_depth: int = 3
+) -> str:
+    """Trace a multi-hop call chain from a function. direction is 'callees' (outgoing)
+    or 'callers' (incoming). Use to understand deep call hierarchies."""
+    return _get_related_tool().get_call_chain(
+        function_name, direction=direction, max_depth=max_depth
+    )
+
+
+@tool
+def get_module_summary(path: str) -> str:
+    """Get a high-level summary of all symbols in a file or directory.
+    Use to understand the structure of a module without reading every file."""
+    return _get_symbol_tool().get_module_summary(path)
+
+
 # -- Public API ---------------------------------------------------------------
 
 
 def get_tools() -> List[BaseTool]:
     """Return the list of all agent tools for bind_tools() and ToolNode()."""
-    return [search_codebase, read_file, list_directory, get_callers, get_callees]
+    return [
+        search_codebase,
+        read_file,
+        list_directory,
+        get_callers,
+        get_callees,
+        get_symbol_definition,
+        get_call_chain,
+        get_module_summary,
+    ]

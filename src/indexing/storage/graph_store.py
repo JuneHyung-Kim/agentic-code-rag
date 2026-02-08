@@ -1,3 +1,5 @@
+from collections import deque
+
 import networkx as nx
 from typing import List, Dict, Any, Optional
 from utils.logger import logger
@@ -84,6 +86,60 @@ class GraphStore:
                     "type": node_data.get("type", "unknown")
                 })
         return callees
+
+    def get_call_chain(
+        self, function_name: str, direction: str = "callees", max_depth: int = 3
+    ) -> List[Dict[str, Any]]:
+        """BFS traversal of the call graph up to *max_depth* hops.
+
+        Args:
+            function_name: Name of the root function.
+            direction: ``"callees"`` (outgoing) or ``"callers"`` (incoming).
+            max_depth: Maximum traversal depth (capped at 10).
+
+        Returns:
+            List of dicts with ``node_id, name, file_path, type, depth``.
+        """
+        max_depth = min(max_depth, 10)
+
+        # Resolve starting nodes
+        start_nodes = [
+            n for n in self.graph.nodes()
+            if n.endswith(f":{function_name}") or n == function_name
+        ]
+        if not start_nodes:
+            return []
+
+        traverse = (
+            self.graph.successors if direction == "callees" else self.graph.predecessors
+        )
+
+        visited: set = set(start_nodes)
+        queue: deque = deque()
+        for s in start_nodes:
+            for nb in traverse(s):
+                if nb not in visited:
+                    queue.append((nb, 1))
+                    visited.add(nb)
+
+        results: List[Dict[str, Any]] = []
+        while queue:
+            node, depth = queue.popleft()
+            data = self.graph.nodes.get(node, {})
+            results.append({
+                "node_id": node,
+                "name": data.get("name", node),
+                "file_path": data.get("file_path", ""),
+                "type": data.get("type", "unknown"),
+                "depth": depth,
+            })
+            if depth < max_depth:
+                for nb in traverse(node):
+                    if nb not in visited:
+                        visited.add(nb)
+                        queue.append((nb, depth + 1))
+
+        return results
 
     def delete_by_file(self, file_path: str):
         """Remove all nodes belonging to a specific file."""
