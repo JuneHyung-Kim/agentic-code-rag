@@ -4,270 +4,175 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Code RAG Agent** - a specialized AI system for semantic code search and understanding of large codebases. It uses tree-sitter for AST parsing, ChromaDB for vector storage, and hybrid search (semantic + BM25) to enable natural language queries over C, C++, and Python code.
+**Code RAG Agent** - A semantic code search and understanding system for large codebases. Uses tree-sitter for AST parsing, ChromaDB for vector storage, NetworkX for call graphs, and hybrid search (semantic + BM25) to enable natural language queries over C, C++, and Python code.
 
-**Primary Use Case**: Multi-agent system component that serves as a "Code Knowledge Expert" for understanding and navigating large codebases.
+**Primary Use Case**: Multi-agent system component serving as a "Code Knowledge Expert" for navigating large codebases.
 
 ## Development Commands
 
-### Installation & Setup
 ```bash
-# Install in development mode
-pip install -e .
+# Install
+pip install -e .           # Basic install
+pip install -e ".[dev]"    # With dev dependencies
 
-# Install with dev dependencies
-pip install -e ".[dev]"
+# Configure
+cp .env.example .env       # Edit with API keys
 
-# Configure environment
-cp .env.example .env
-# Edit .env with your API keys and provider settings
-```
+# Run
+python src/cli.py index /path/to/codebase
+python src/cli.py search "query" --alpha 0.7 --project /filter/path
+python src/cli.py chat
+python src/cli.py reset
 
-### Running the Application
-```bash
-# Index a codebase
-python src/main.py index /path/to/codebase
-
-# Search indexed code
-python src/main.py search "your natural language query"
-
-# Interactive chat mode
-python src/main.py chat
-
-# Reset database
-python src/main.py reset
-```
-
-### Code Quality & Testing
-```bash
-# Format code
+# Code quality
 black src/
-
-# Type checking
 mypy src/
-
-# Linting
 flake8 src/
-
-# Run tests
 pytest tests/
+pytest tests/test_parser.py -v
 
-# Run specific test
-pytest tests/test_parser.py
-pytest tests/test_integration.py
-```
-
-### Development Scripts
-```bash
-# Verify parser functionality (useful during development)
-python scripts/verify_parser.py /path/to/code/file.c
-
-# Evaluate search quality
+# Development utilities
+python scripts/verify_parser.py /path/to/file.c
 python scripts/evaluate_search.py
 ```
 
 ## Architecture
 
-### High-Level Component Flow
+### LangGraph Agent Flow
+
+The agent uses LangGraph for stateful multi-step reasoning:
 
 ```
-CLI (main.py)
-    ↓
-┌─────────────────────────────────────────┐
-│ Application Layer                       │
-│ - CodeAgent (agent/core.py)            │
-│ - CodeIndexer (indexing/indexer.py)    │
-└─────────────────┬───────────────────────┘
-                  ↓
-┌─────────────────────────────────────────┐
-│ Business Logic Layer                    │
-│ - SearchEngine (retrieval/)             │
-│ - CodeParser (indexing/parser.py)       │
-└─────────────────┬───────────────────────┘
-                  ↓
-┌─────────────────────────────────────────┐
-│ Data Access Layer (Singleton Pattern)   │
-│ - VectorStore (storage/vector_store.py) │
-│ - KeywordStore (storage/keyword_store.py)│
-│ - FileRegistry (indexing/file_registry.py)│
-└─────────────────────────────────────────┘
+User Query → Planner → Executor → Refinery ─┬─→ Synthesizer → Response
+                ↑                           │
+                └───── CONTINUE ────────────┘
 ```
 
-### Key Architectural Patterns
+**Nodes** (`agent/nodes.py`):
+- `plan_node`: Creates research plan from query and existing findings
+- `execute_node`: Runs tools (search, file listing, related code) for current step
+- `refine_node`: Decides CONTINUE (more research needed) or FINISH
+- `synthesize_node`: Generates final answer from accumulated findings
 
-**Singleton Pattern**: VectorStore and SearchEngine use singletons to ensure single ChromaDB connection and maintain consistent BM25 index across requests. Access via `get_vector_store()` and `get_search_engine()` factory functions.
+**State** (`agent/state.py`): `AgentState` TypedDict with `input`, `chat_history`, `plan`, `current_step`, `findings`, `response`, `loop_decision`
 
-**Strategy Pattern**: Language-specific parsing via `PythonParser` and `CppParser`. Each parser handles language-specific AST extraction with tree-sitter.
+### Multi-Strategy Indexing
 
-**DAO Pattern**: `VectorStore` encapsulates all ChromaDB operations, abstracting embedding function selection and vector operations.
+Indexing uses the Strategy pattern with three parallel strategies:
 
-**Incremental Indexing**: `FileRegistry` tracks file state (SHA1 hash, mtime, size) to enable delta-based reindexing. Only changed files are reprocessed unless schema version or root path changes.
-
-### Module Responsibilities
-
-- **`agent/core.py`**: AI orchestration with OpenAI, Gemini, or Ollama. Manages tool calling and conversation history.
-- **`indexing/indexer.py`**: Coordinates indexing pipeline, file discovery, and incremental update logic.
-- **`indexing/parser.py`**: Language dispatcher that routes to specialized parsers based on file extension.
-- **`indexing/parsers/python_parser.py`**: Extracts functions, classes, methods with docstrings and type hints using tree-sitter.
-- **`indexing/parsers/cpp_parser.py`**: Extracts functions, structs, classes, enums, typedefs, macros from C/C++ code.
-- **`indexing/file_registry.py`**: JSON-based registry for incremental indexing change tracking.
-- **`retrieval/search_engine.py`**: Hybrid search combining vector similarity (ChromaDB) and keyword matching (BM25) with weighted fusion.
-- **`storage/vector_store.py`**: ChromaDB wrapper with multi-provider embedding support (OpenAI, Gemini, Ollama, default).
-- **`storage/keyword_store.py`**: BM25-based keyword index for lexical search.
-- **`tools/search_tool.py`**: Agent tool interface for semantic code search.
-- **`config.py`**: Centralized configuration with provider validation and .env loading.
-
-### Data Structures
-
-**CodeNode**: Core data structure representing parsed code elements.
-```python
-@dataclass
-class CodeNode:
-    type: str           # 'function', 'class', 'struct', 'method', etc.
-    name: str           # Identifier name
-    file_path: str      # Relative path from project root
-    start_line: int     # 0-indexed
-    end_line: int       # 0-indexed
-    content: str        # Raw source code
-    language: str       # 'python', 'c', 'cpp'
-    docstring: str      # Documentation
-    arguments: List[str]
-    return_type: str
-    signature: str
-    parent_name: str    # Class name for methods
-    imports: List[str]  # File-level imports/includes
+```
+CodeIndexer
+    ├── VectorStrategy  → VectorStore (ChromaDB)
+    ├── KeywordStrategy → KeywordStore (BM25)
+    └── GraphStrategy   → GraphStore (NetworkX)
 ```
 
-**Hybrid Search Algorithm**:
-1. Vector search via ChromaDB (semantic similarity, retrieves 2k candidates)
-2. BM25 keyword search (lexical matching)
-3. Score normalization: vector = 1.0/(1.0+distance), bm25 = score/max_score
-4. Weighted fusion: final = (alpha × vector) + ((1-alpha) × bm25), where alpha=0.7 default
-5. Sort by final score and return top n results
+All strategies receive the same `CodeNode` list with pre-assigned IDs, ensuring consistent cross-store references.
 
-### Provider Configuration
+**Storage persistence**:
+- Vector data: `./db/` (ChromaDB)
+- Graph data: `./db/graph_store.pkl`
+- Keyword index: `./db/keyword_store.pkl`
+- File registry: `./db/index_registry.json`
 
-The system supports flexible provider mixing:
+### Key Singletons
 
-**Embedding Providers** (EMBEDDING_PROVIDER):
-- `openai`: OpenAI embeddings (text-embedding-3-small, text-embedding-3-large)
-- `gemini`: Google Generative AI embeddings
-- `ollama`: Local embeddings (mxbai-embed-large, nomic-embed-text)
-- `default`: ChromaDB's default embedding (Sentence Transformers)
+Access via factory functions to ensure single instances:
+- `get_vector_store()` - ChromaDB connection
+- `get_keyword_store()` - BM25 index
+- `get_graph_store()` - NetworkX DiGraph
+- `get_search_engine()` - Hybrid search orchestrator
+- `get_model()` - LLM instance (`agent/model.py`)
+- `tool_registry` - Tool registry singleton (`agent/tools.py`)
 
-**Chat Providers** (CHAT_PROVIDER):
-- `openai`: GPT models (gpt-4o, gpt-4-turbo, gpt-3.5-turbo)
-- `gemini`: Gemini models (gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash-exp)
-- `ollama`: Local LLMs (llama3.2, qwen2.5, deepseek-r1)
+Reset functions available for testing: `reset_model()` (`agent/model.py`), `tool_registry.reset()` (`agent/tools.py`)
 
-Configuration validated in `config.py` on startup.
+### Module Map
 
-## Important Implementation Details
+| Module | Purpose |
+|--------|---------|
+| `cli.py` | CLI entry point (index, search, chat, reset) |
+| `agent/graph.py` | LangGraph workflow definition |
+| `agent/nodes.py` | Node implementations (plan, execute, refine, synthesize) |
+| `agent/model.py` | LLM singleton factory (gemini/ollama) |
+| `agent/prompts/` | Prompt package: YAML templates, loader, Pydantic output schemas |
+| `agent/tools.py` | ToolRegistry: tool metadata, singleton management, dispatch |
+| `indexing/indexer.py` | Orchestrates multi-strategy indexing |
+| `indexing/strategies/` | Vector, Keyword, Graph indexing strategies |
+| `indexing/storage/` | VectorStore, KeywordStore, GraphStore |
+| `retrieval/search_engine.py` | Hybrid search with score fusion |
+| `tools/` | Agent tools: SearchTool, FileSystemTools, RelatedCodeTool |
 
-### File Filtering
-Indexing automatically skips:
-- Hidden directories (starting with `.`)
-- Build directories (`build/`, `dist/`)
-- Virtual environments (`venv/`, `.venv/`)
-- Cache directories (`__pycache__/`)
+### Data Flow
 
-Supported extensions: `.py`, `.c`, `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`
+**Indexing**: File → Parser → CodeNode[] → ID assignment → Strategy.index() → Stores
 
-### Database Location
-ChromaDB stores in `./db/` by default. To reset: `rm -rf db/` or `python src/main.py reset`.
+**Search**: Query → VectorStore.search(2k) → KeywordStore.search() → Score fusion (alpha blend) → Top-n results
 
-File registry JSON at `./index_registry.json` tracks indexed state.
+**Agent**: Query → Planner (LLM) → Plan steps → Executor (tools) → Refinery (LLM decision) → Loop or Synthesize
 
-### Tree-sitter Parsers
-C/C++ parser includes defensive filters for:
-- Operator overloading (skips `operator[]`, `operator+`, etc.)
-- Template syntax edge cases
-- Macro definitions (extracts as code nodes)
+## Provider Configuration
 
-Python parser extracts:
-- Top-level functions with full signatures
-- Classes with methods and decorators
-- Docstrings and type annotations
-- Import statements
+Embedding and chat providers can be mixed independently:
 
-### Performance Considerations
-- Singleton pattern prevents redundant ChromaDB initialization
-- Incremental indexing only processes changed files (SHA1-based diffing)
-- BM25 index maintained in-memory for fast keyword matching
-- Vector search limited to 2k candidates before BM25 fusion
-
-## Adding New Features
-
-### Adding a New Language Parser
-1. Create parser in `src/indexing/parsers/new_language_parser.py`
-2. Implement tree-sitter AST traversal and CodeNode extraction
-3. Register in `src/indexing/parser.py` language mapping
-4. Add tree-sitter language binding to dependencies in `pyproject.toml`
-
-### Adding a New Agent Tool
-1. Create tool definition in `src/tools/`
-2. Implement tool interface with proper schema
-3. Register tool in `src/agent/core.py` tool list
-4. Update provider-specific tool calling logic if needed
-
-### Adding a New Provider
-1. Extend `config.py` with provider validation
-2. Add provider-specific initialization in `agent/core.py` or `storage/vector_store.py`
-3. Add required dependencies to `pyproject.toml`
-4. Update `.env.example` with provider configuration
-
-## Common Workflows
-
-### Debugging Indexing Issues
-1. Check file registry: `cat index_registry.json` to see indexed files
-2. Verify parser output: `python scripts/verify_parser.py /path/to/file.c`
-3. Enable verbose logging in indexer
-4. Check ChromaDB collection: inspect `db/` directory
-
-### Testing Search Quality
-1. Index a test codebase
-2. Run `python scripts/evaluate_search.py` for systematic evaluation
-3. Adjust hybrid search alpha parameter in `retrieval/search_engine.py`
-4. Compare vector-only (alpha=1.0) vs hybrid (alpha=0.7) vs keyword-only (alpha=0.0)
-
-### Updating to New Schema
-When changing CodeNode structure or metadata:
-1. Increment `SCHEMA_VERSION` in `indexing/file_registry.py`
-2. Clear database: `python src/main.py reset`
-3. Reindex: `python src/main.py index /path/to/codebase`
-
-## Configuration Examples
-
-**All Local (Free, Private)**:
 ```bash
+# All local (Ollama)
 EMBEDDING_PROVIDER=ollama
-EMBEDDING_MODEL=mxbai-embed-large
 CHAT_PROVIDER=ollama
-CHAT_MODEL=qwen2.5:14b
-OLLAMA_BASE_URL=http://localhost:11434
-```
 
-**Cloud Performance**:
-```bash
-EMBEDDING_PROVIDER=openai
-EMBEDDING_MODEL=text-embedding-3-small
-CHAT_PROVIDER=openai
-CHAT_MODEL=gpt-4o
-OPENAI_API_KEY=sk-...
-```
-
-**Hybrid Cost-Effective**:
-```bash
-EMBEDDING_PROVIDER=default
+# Cloud
+EMBEDDING_PROVIDER=gemini
 CHAT_PROVIDER=gemini
-CHAT_MODEL=gemini-1.5-flash
-GEMINI_API_KEY=AIz...
+
+# Hybrid
+EMBEDDING_PROVIDER=default  # ChromaDB's Sentence Transformers
+CHAT_PROVIDER=ollama
 ```
 
-## Documentation
+**Chat providers**: `gemini` and `ollama` (see `agent/model.py:get_model()`)
+**Embedding providers**: `gemini`, `ollama`, `default` (ChromaDB's Sentence Transformers)
 
-- **USER_GUIDE.md**: Installation, configuration, and usage instructions
-- **DEVELOPER_GUIDE.md**: High-level architecture and extension points
-- **INDEXING_AND_PARSING.md**: Deep dive into parsing pipeline and AST extraction
-- **API_REFERENCE.md**: Programmatic API documentation
-- **ROADMAP.md**: Future features and improvements
+## Incremental Indexing
+
+File registry tracks SHA1 hashes per project. On re-index:
+1. Detect added/modified/deleted files
+2. Delete old entries from all stores (vector, keyword, graph)
+3. Index new/modified files through all strategies
+4. Persist stores to disk
+
+**Force full reindex**: Delete `./db/` or run `python src/cli.py reset`
+
+**Schema changes**: Increment `SCHEMA_VERSION` in `indexing/file_registry.py`, then reset and reindex.
+
+## Adding Features
+
+### New Language Parser
+1. Create `src/indexing/parsers/{lang}_parser.py`
+2. Implement tree-sitter traversal returning `List[CodeNode]`
+3. Register extension mapping in `src/indexing/parser.py`
+4. Add `tree-sitter-{lang}` to `pyproject.toml`
+
+### New Indexing Strategy
+1. Create `src/indexing/strategies/{name}_strategy.py`
+2. Extend `BaseStrategy` with `index()` and `delete()` methods
+3. Add to `CodeIndexer.strategies` list in `indexing/indexer.py`
+
+### New Agent Tool
+1. Create tool class in `src/tools/`
+2. Register in `ToolRegistry._register_builtins()` (`agent/tools.py`) with handler
+3. For advanced routing, replace heuristics with LLM-based tool selection
+
+## Debugging
+
+```bash
+# Check indexed files
+cat ./db/index_registry.json | python -m json.tool
+
+# Test parser on single file
+python scripts/verify_parser.py /path/to/file.c
+
+# Search with different alpha values
+python src/cli.py search "query" --alpha 1.0   # Vector only
+python src/cli.py search "query" --alpha 0.0   # Keyword only
+python src/cli.py search "query" --alpha 0.7   # Hybrid (default)
+```

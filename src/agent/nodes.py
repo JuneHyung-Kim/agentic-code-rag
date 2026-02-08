@@ -8,17 +8,18 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
+from langchain_core.output_parsers import StrOutputParser
 
 from config import config
 from agent.state import AgentState
 from agent.model import get_model, get_model_with_tools
 from agent.prompts import (
     PLAN_PROMPT,
-    EXECUTOR_SYSTEM,
-    EXECUTOR_USER,
+    EXECUTOR_PROMPT,
     REFINE_PROMPT,
     SYNTHESIZE_PROMPT,
+    PlanOutput,
+    RefineDecision,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,11 +46,12 @@ def plan_node(state: AgentState) -> Dict[str, Any]:
     if iteration > 0:
         logger.info(f"Replanning (iteration {iteration})")
 
-    chain = PLAN_PROMPT | model | JsonOutputParser()
+    chain = PLAN_PROMPT | model.with_structured_output(PlanOutput)
 
     try:
-        plan = chain.invoke({"input": state["input"], "findings": findings_str})
-        if not isinstance(plan, list):
+        result = chain.invoke({"input": state["input"], "findings": findings_str})
+        plan = result.steps
+        if not plan:
             plan = ["Search for relevant code related to the query"]
         logger.info(f"Generated plan with {len(plan)} steps: {plan}")
     except Exception as e:
@@ -86,14 +88,13 @@ def setup_executor(state: AgentState) -> Dict[str, Any]:
     # Clear old messages
     remove_msgs = [RemoveMessage(id=m.id) for m in state.get("messages", []) if m.id]
 
-    # Build fresh messages
-    sys_msg = SystemMessage(content=EXECUTOR_SYSTEM.format(
+    # Build fresh messages from prompt template
+    formatted = EXECUTOR_PROMPT.format_messages(
         current_step=current_step_desc,
         findings=findings_str,
-    ))
-    user_msg = HumanMessage(content=EXECUTOR_USER.format(
-        current_step=current_step_desc,
-    ))
+    )
+    sys_msg = formatted[0]
+    user_msg = formatted[1]
 
     return {
         "messages": remove_msgs + [sys_msg, user_msg],
@@ -192,17 +193,17 @@ def refine_node(state: AgentState) -> Dict[str, Any]:
     current = state.get("current_step", 0)
     total = len(state.get("plan", []))
 
-    chain = REFINE_PROMPT | model | JsonOutputParser()
+    chain = REFINE_PROMPT | model.with_structured_output(RefineDecision)
 
     try:
-        decision_data = chain.invoke({
+        result = chain.invoke({
             "input": state["input"],
             "findings": findings_str,
             "step": current,
             "total": total,
         })
-        decision = decision_data.get("decision", "FINISH")
-        reason = decision_data.get("reason", "")
+        decision = result.decision
+        reason = result.reason
         logger.info(f"Refinery decision: {decision} - {reason}")
     except Exception as e:
         logger.warning(f"Refinery failed: {e}")

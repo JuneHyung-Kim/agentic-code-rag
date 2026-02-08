@@ -1,0 +1,8 @@
+planning_guidelines: |-
+  - If findings are partially sufficient, create a plan to find ONLY the MISSING information.
+  - Keep steps granular and actionable.
+  - Each step should be achievable with one or two tool calls.
+  - If you have enough information, return a single step: ["Synthesize the final answer"]
+
+plan_examples: |-
+  Example: ["Search for class SearchTool", "Read the file containing SearchTool", "Find usages of the search method"]

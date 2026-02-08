@@ -21,6 +21,7 @@ from agent.nodes import (
     refine_node,
     synthesize_node,
 )
+from agent.prompts import PlanOutput, RefineDecision
 
 
 def _make_state(**overrides) -> dict:
@@ -49,6 +50,21 @@ def _mock_model_returning(ai_message):
     return mock
 
 
+def _mock_model_with_structured_output(output_obj):
+    """Create a mock model for with_structured_output() chains.
+
+    The chain is: prompt | model.with_structured_output(Schema)
+    So model.with_structured_output() must return a runnable that,
+    when called or invoked, returns the output_obj.
+    """
+    mock_model = MagicMock()
+    mock_runnable = MagicMock()
+    mock_runnable.return_value = output_obj
+    mock_runnable.invoke.return_value = output_obj
+    mock_model.with_structured_output.return_value = mock_runnable
+    return mock_model
+
+
 # ---------------------------------------------------------------------------
 # plan_node
 # ---------------------------------------------------------------------------
@@ -58,8 +74,8 @@ class TestPlanNode:
     @patch("agent.nodes.get_model")
     def test_normal_plan_generation(self, mock_get_model):
         """plan_node should return a list of steps from LLM output."""
-        ai_msg = AIMessage(content='["Search for SearchEngine class", "Read the file"]')
-        mock_get_model.return_value = _mock_model_returning(ai_msg)
+        plan_output = PlanOutput(steps=["Search for SearchEngine class", "Read the file"])
+        mock_get_model.return_value = _mock_model_with_structured_output(plan_output)
 
         state = _make_state()
         result = plan_node(state)
@@ -74,10 +90,10 @@ class TestPlanNode:
     def test_fallback_plan_on_error(self, mock_get_model):
         """If LLM fails, plan_node should return fallback plan."""
         mock_model = MagicMock()
-        mock_model.return_value = MagicMock()  # will cause parser error
-        mock_model.invoke.side_effect = Exception("API error")
-        # Also make __call__ raise so the chain fails
-        mock_model.side_effect = Exception("API error")
+        mock_runnable = MagicMock()
+        mock_runnable.invoke.side_effect = Exception("API error")
+        mock_runnable.side_effect = Exception("API error")
+        mock_model.with_structured_output.return_value = mock_runnable
         mock_get_model.return_value = mock_model
 
         state = _make_state()
@@ -89,8 +105,8 @@ class TestPlanNode:
     @patch("agent.nodes.get_model")
     def test_iteration_count_increments(self, mock_get_model):
         """iteration_count should increment on each call."""
-        ai_msg = AIMessage(content='["step1"]')
-        mock_get_model.return_value = _mock_model_returning(ai_msg)
+        plan_output = PlanOutput(steps=["step1"])
+        mock_get_model.return_value = _mock_model_with_structured_output(plan_output)
 
         state = _make_state(iteration_count=2)
         result = plan_node(state)
@@ -292,8 +308,8 @@ class TestRefineNode:
     @patch("agent.nodes.get_model")
     def test_continue_decision(self, mock_get_model):
         """refine_node should return CONTINUE when LLM decides so."""
-        ai_msg = AIMessage(content='{"decision": "CONTINUE", "reason": "Need more info"}')
-        mock_get_model.return_value = _mock_model_returning(ai_msg)
+        refine_output = RefineDecision(decision="CONTINUE", reason="Need more info")
+        mock_get_model.return_value = _mock_model_with_structured_output(refine_output)
 
         state = _make_state(
             findings={"step_0: search": "some results"},
@@ -307,8 +323,8 @@ class TestRefineNode:
     @patch("agent.nodes.get_model")
     def test_finish_decision(self, mock_get_model):
         """refine_node should return FINISH when LLM decides so."""
-        ai_msg = AIMessage(content='{"decision": "FINISH", "reason": "Sufficient"}')
-        mock_get_model.return_value = _mock_model_returning(ai_msg)
+        refine_output = RefineDecision(decision="FINISH", reason="Sufficient")
+        mock_get_model.return_value = _mock_model_with_structured_output(refine_output)
 
         state = _make_state(
             findings={"step_0: search": "complete results"},
