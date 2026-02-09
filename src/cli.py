@@ -8,8 +8,11 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from config import config
 from indexing.indexer import CodeIndexer
 from indexing.storage.vector_store import get_vector_store
+from indexing.storage.graph_store import get_graph_store
 from retrieval.search_engine import get_search_engine
 from agent.core import CodeAgent
+from profiling.builder import ProfileBuilder
+from profiling.profile_store import save_profile, reset_profile_cache
 
 def index_project(project_path: str):
     if not os.path.exists(project_path):
@@ -17,6 +20,39 @@ def index_project(project_path: str):
         return
     indexer = CodeIndexer(project_path)
     indexer.index_project()
+
+
+def init_project(project_path: str, use_llm: bool = True):
+    """Index a project and generate a codebase profile."""
+    project_path = os.path.abspath(project_path)
+    if not os.path.exists(project_path):
+        print(f"Error: Path {project_path} does not exist.")
+        return
+
+    # Phase 1: Index
+    print(f"Indexing {project_path}...")
+    indexer = CodeIndexer(project_path)
+    indexer.index_project()
+
+    # Phase 2: Extract profile
+    print("Building codebase profile...")
+    builder = ProfileBuilder(get_vector_store(), get_graph_store(), project_path)
+    profile = builder.build()
+
+    # Phase 3: Optional LLM synthesis
+    if use_llm:
+        print("Generating AI summary...")
+        from profiling.synthesizer import synthesize_summary
+        profile.ai_summary = synthesize_summary(profile)
+
+    # Phase 4: Persist
+    save_profile(profile)
+    reset_profile_cache()
+    print(f"Profile saved to ./db/codebase_profile.json and ./db/codebase_profile.md")
+    print(f"  Files: {profile.total_files}, Symbols: {profile.total_symbols}")
+    if profile.language_stats:
+        langs = ", ".join(sorted(profile.language_stats.keys()))
+        print(f"  Languages: {langs}")
 
 def search_code(query: str, n_results: int = 5, alpha: float = 0.7, project_root: str = None):
     """
@@ -134,6 +170,11 @@ def main():
         help="Filter results by project root path (optional)",
     )
 
+    # Init command
+    init_parser = subparsers.add_parser("init", help="Index a project and generate a codebase profile")
+    init_parser.add_argument("path", help="Path to the project to index and profile")
+    init_parser.add_argument("--no-llm", action="store_true", help="Skip LLM-generated summary")
+
     # Chat command
     chat_parser = subparsers.add_parser("chat", help="Start a chat session with the AI Agent")
 
@@ -142,7 +183,9 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "index":
+    if args.command == "init":
+        init_project(args.path, use_llm=not args.no_llm)
+    elif args.command == "index":
         index_project(args.path)
     elif args.command == "search":
         search_code(

@@ -5,6 +5,9 @@ messages:
       Your goal is to create a step-by-step research plan to answer the user's request.
       Consider the User Request and any Existing Findings.
 
+      Codebase Context:
+      {codebase_context}
+
       Guidelines:
       {planning_guidelines}
 

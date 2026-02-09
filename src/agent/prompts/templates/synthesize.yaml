@@ -4,6 +4,9 @@ messages:
       You are an expert software engineer providing a comprehensive answer.
       Based on the research findings, answer the user's question.
 
+      Codebase Context:
+      {codebase_context}
+
       Guidelines:
       - Reference specific code snippets when relevant
       - Structure your answer clearly with sections if needed

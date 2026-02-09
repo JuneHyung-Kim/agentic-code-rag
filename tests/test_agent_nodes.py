@@ -71,8 +71,9 @@ def _mock_model_with_structured_output(output_obj):
 
 class TestPlanNode:
 
+    @patch("agent.nodes.get_codebase_context", return_value="")
     @patch("agent.nodes.get_model")
-    def test_normal_plan_generation(self, mock_get_model):
+    def test_normal_plan_generation(self, mock_get_model, _mock_ctx):
         """plan_node should return a list of steps from LLM output."""
         plan_output = PlanOutput(steps=["Search for SearchEngine class", "Read the file"])
         mock_get_model.return_value = _mock_model_with_structured_output(plan_output)
@@ -86,8 +87,9 @@ class TestPlanNode:
         assert result["current_step"] == 0
         assert result["iteration_count"] == 1
 
+    @patch("agent.nodes.get_codebase_context", return_value="")
     @patch("agent.nodes.get_model")
-    def test_fallback_plan_on_error(self, mock_get_model):
+    def test_fallback_plan_on_error(self, mock_get_model, _mock_ctx):
         """If LLM fails, plan_node should return fallback plan."""
         mock_model = MagicMock()
         mock_runnable = MagicMock()
@@ -102,8 +104,9 @@ class TestPlanNode:
         assert result["plan"] == ["Search for relevant code related to the query"]
         assert result["current_step"] == 0
 
+    @patch("agent.nodes.get_codebase_context", return_value="")
     @patch("agent.nodes.get_model")
-    def test_iteration_count_increments(self, mock_get_model):
+    def test_iteration_count_increments(self, mock_get_model, _mock_ctx):
         """iteration_count should increment on each call."""
         plan_output = PlanOutput(steps=["step1"])
         mock_get_model.return_value = _mock_model_with_structured_output(plan_output)
@@ -355,8 +358,9 @@ class TestRefineNode:
 
 class TestSynthesizeNode:
 
+    @patch("agent.nodes.get_codebase_context", return_value="")
     @patch("agent.nodes.get_model")
-    def test_generates_response(self, mock_get_model):
+    def test_generates_response(self, mock_get_model, _mock_ctx):
         """synthesize_node should produce a response string."""
         ai_msg = AIMessage(
             content="The search engine uses hybrid search combining vector and BM25."

@@ -13,6 +13,7 @@ from langchain_core.output_parsers import StrOutputParser
 from config import config
 from agent.state import AgentState
 from agent.model import get_model, get_model_with_tools
+from profiling.profile_store import get_codebase_context
 from agent.prompts import (
     PLAN_PROMPT,
     EXECUTOR_PROMPT,
@@ -46,10 +47,16 @@ def plan_node(state: AgentState) -> Dict[str, Any]:
     if iteration > 0:
         logger.info(f"Replanning (iteration {iteration})")
 
+    codebase_ctx = get_codebase_context() or "No codebase profile available. Run 'init' to generate one."
+
     chain = PLAN_PROMPT | model.with_structured_output(PlanOutput)
 
     try:
-        result = chain.invoke({"input": state["input"], "findings": findings_str})
+        result = chain.invoke({
+            "input": state["input"],
+            "findings": findings_str,
+            "codebase_context": codebase_ctx,
+        })
         plan = result.steps
         if not plan:
             plan = ["Search for relevant code related to the query"]
@@ -221,7 +228,13 @@ def synthesize_node(state: AgentState) -> Dict[str, Any]:
         f"### {k}\n{v}\n" for k, v in state.get("findings", {}).items()
     )
 
+    codebase_ctx = get_codebase_context() or "No codebase profile available. Run 'init' to generate one."
+
     chain = SYNTHESIZE_PROMPT | model | StrOutputParser()
-    response = chain.invoke({"input": state["input"], "findings": findings_str})
+    response = chain.invoke({
+        "input": state["input"],
+        "findings": findings_str,
+        "codebase_context": codebase_ctx,
+    })
 
     return {"response": response}
