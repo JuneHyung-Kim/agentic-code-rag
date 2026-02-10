@@ -9,6 +9,43 @@ logger = logging.getLogger(__name__)
 
 _model_instance = None
 _model_with_tools_instance = None
+_auto_approve = False
+
+
+class APICallCancelled(Exception):
+    """Raised when user declines an API call in confirmation prompt."""
+    pass
+
+
+def _wrap_with_confirmation(model):
+    """Monkey-patch model.invoke() to ask user confirmation before each API call.
+
+    Covers all call patterns:
+    - prompt | model | parser (LCEL chains call model.invoke internally)
+    - model.with_structured_output(Schema) -> RunnableBinding(bound=model) -> bound.invoke()
+    - model.bind_tools(tools) -> same RunnableBinding pattern
+    - model.invoke(messages) direct calls
+    """
+    original_invoke = model.invoke
+
+    def confirmed_invoke(*args, **kwargs):
+        global _auto_approve
+        if _auto_approve:
+            return original_invoke(*args, **kwargs)
+
+        messages = args[0] if args else kwargs.get("input", [])
+        msg_count = len(messages) if isinstance(messages, list) else "?"
+        print(f"\n[API Call] {config.chat_provider}/{config.chat_model} (messages: {msg_count})")
+        choice = input("Proceed? [Y/n/all]: ").strip().lower()
+        if choice == "n":
+            raise APICallCancelled("API call cancelled by user")
+        if choice == "all":
+            _auto_approve = True
+        return original_invoke(*args, **kwargs)
+
+    # Bypass Pydantic's __setattr__ which rejects unknown fields
+    object.__setattr__(model, "invoke", confirmed_invoke)
+    return model
 
 
 def get_model():
@@ -36,6 +73,9 @@ def get_model():
             "Must be 'gemini' or 'ollama'."
         )
 
+    if config.confirm_api_calls:
+        _wrap_with_confirmation(_model_instance)
+
     return _model_instance
 
 
@@ -53,6 +93,7 @@ def get_model_with_tools():
 
 def reset_model():
     """Reset the model singletons. Useful for testing or dynamic config changes."""
-    global _model_instance, _model_with_tools_instance
+    global _model_instance, _model_with_tools_instance, _auto_approve
     _model_instance = None
     _model_with_tools_instance = None
+    _auto_approve = False

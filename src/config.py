@@ -34,6 +34,7 @@ class AgentConfig:
             self.chat_model = legacy_model
             
         self.project_root = os.getenv("PROJECT_ROOT", "./")
+        self.confirm_api_calls = os.getenv("CONFIRM_API_CALLS", "true").lower() == "true"
     
     def validate_embedding_config(self) -> None:
         """Validate embedding configuration."""
