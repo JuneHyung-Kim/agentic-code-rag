@@ -3,7 +3,9 @@ import os
 import time
 
 # Add src to path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# We need to add the 'src' directory to sys.path so that imports from 'src' work correctly.
+# Assuming this file is in the project root, 'src' is a subdirectory.
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 from config import config
 from indexing.indexer import CodeIndexer
