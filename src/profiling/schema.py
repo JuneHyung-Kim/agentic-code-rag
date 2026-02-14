@@ -36,6 +36,14 @@ class EntryPoint(BaseModel):
     reason: str = ""
 
 
+class KeyModule(BaseModel):
+    relative_path: str
+    symbol_count: int = 0
+    total_in_degree: int = 0
+    total_out_degree: int = 0
+    role: str = ""  # e.g. "most symbols", "most called", "hub"
+
+
 class GraphStats(BaseModel):
     total_nodes: int = 0
     total_edges: int = 0
@@ -53,5 +61,6 @@ class CodebaseProfile(BaseModel):
     directory_tree: Optional[DirectoryNode] = None
     module_map: List[FileSummary] = Field(default_factory=list)
     entry_points: List[EntryPoint] = Field(default_factory=list)
+    key_modules: List[KeyModule] = Field(default_factory=list)
     graph_stats: GraphStats = Field(default_factory=GraphStats)
     ai_summary: Optional[str] = None

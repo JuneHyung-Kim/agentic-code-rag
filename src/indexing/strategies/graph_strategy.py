@@ -1,4 +1,5 @@
-from typing import List
+from typing import Dict, List
+from collections import defaultdict
 from .base_strategy import BaseStrategy
 from ..schema import CodeNode
 from ..storage.graph_store import GraphStore
@@ -45,6 +46,54 @@ class GraphStrategy(BaseStrategy):
         except Exception as e:
             logger.error(f"GraphStrategy failed to index {file_path}: {e}")
             return False
+
+    def resolve_edges(self):
+        """Resolve bare-name call edges to real node IDs after all files are indexed."""
+        graph = self.graph_store.graph
+
+        # Build name → [node_id] lookup from nodes that have a file_path
+        name_to_ids: Dict[str, List[str]] = defaultdict(list)
+        for node_id, data in graph.nodes(data=True):
+            if data.get("file_path"):
+                name = data.get("name", "")
+                if name:
+                    name_to_ids[name].append(node_id)
+
+        # Find all calls_by_name edges
+        edges_to_remove = []
+        edges_to_add = []
+        for u, v, data in graph.edges(data=True):
+            if data.get("type") != "calls_by_name":
+                continue
+            # v is a bare function name
+            targets = name_to_ids.get(v, [])
+            if targets:
+                edges_to_remove.append((u, v))
+                for target_id in targets:
+                    if target_id != u:  # skip self-calls
+                        edges_to_add.append((u, target_id, {"type": "calls"}))
+
+        # Apply changes
+        for u, v in edges_to_remove:
+            graph.remove_edge(u, v)
+            # Remove orphaned bare-name node if it has no remaining edges
+            if graph.has_node(v) and not graph.nodes[v].get("file_path"):
+                if graph.degree(v) == 0:
+                    graph.remove_node(v)
+
+        for u, v, data in edges_to_add:
+            if not graph.has_edge(u, v):
+                graph.add_edge(u, v, **data)
+
+        resolved = len(edges_to_remove)
+        new_edges = len(edges_to_add)
+        unresolved = sum(
+            1 for _, _, d in graph.edges(data=True) if d.get("type") == "calls_by_name"
+        )
+        logger.info(
+            f"Edge resolution: {resolved} bare-name edges resolved → "
+            f"{new_edges} real edges added, {unresolved} unresolved remain"
+        )
 
     def delete(self, file_path: str) -> bool:
         try:

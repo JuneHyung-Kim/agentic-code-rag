@@ -39,11 +39,13 @@ def init_project(project_path: str, use_llm: bool = True):
     builder = ProfileBuilder(get_vector_store(), get_graph_store(), project_path)
     profile = builder.build()
 
+    '''
     # Phase 3: Optional LLM synthesis
     if use_llm:
         print("Generating AI summary...")
         from profiling.synthesizer import synthesize_summary
         profile.ai_summary = synthesize_summary(profile)
+    '''
 
     # Phase 4: Persist
     save_profile(profile)

@@ -52,6 +52,18 @@ def render_full_markdown(profile: CodebaseProfile) -> str:
                 lines.append(f"- {sym.type} **{sym.name}** (L{sym.start_line}){sig}")
             lines.append("")
 
+    # Key modules
+    if profile.key_modules:
+        lines.append("## Key Modules")
+        lines.append("| File | Symbols | In-degree | Out-degree | Role |")
+        lines.append("|------|---------|-----------|------------|------|")
+        for km in profile.key_modules:
+            lines.append(
+                f"| `{km.relative_path}` | {km.symbol_count} "
+                f"| {km.total_in_degree} | {km.total_out_degree} | {km.role} |"
+            )
+        lines.append("")
+
     # Graph stats
     gs = profile.graph_stats
     if gs.total_nodes > 0:
@@ -128,6 +140,12 @@ def render_prompt_context(profile: CodebaseProfile, max_length: int = 2000) -> s
         dirs = [c.name for c in profile.directory_tree.children if c.type == "directory"]
         if dirs:
             lines.append(f"Top directories: {', '.join(sorted(dirs))}")
+
+    # Key modules
+    if profile.key_modules:
+        lines.append("Key modules:")
+        for km in profile.key_modules[:5]:
+            lines.append(f"  - {km.relative_path} ({km.role})")
 
     # Graph highlights
     gs = profile.graph_stats

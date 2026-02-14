@@ -98,11 +98,17 @@ class CodeIndexer:
         target_paths = [current_paths[p] for p in added + modified]
         indexed_count, skipped_count, error_count = self._index_files(target_paths)
 
-        # 8. Update Registry
+        # 8. Resolve bare-name call edges now that all nodes are indexed
+        graph_strategy = next(
+            s for s in self.strategies if isinstance(s, GraphStrategy)
+        )
+        graph_strategy.resolve_edges()
+
+        # 9. Update Registry
         update_project_files(registry, self.root_path, current_files)
         save_registry(self.registry_path, registry)
         
-        # 9. Save Stores
+        # 10. Save Stores
         self.graph_store.save(self.graph_path)
         self.keyword_store.save(self.keyword_path)
 

@@ -20,10 +20,10 @@ def save_profile(profile: CodebaseProfile, persist_path: str = _DEFAULT_PERSIST_
     json_path = os.path.join(persist_path, "codebase_profile.json")
     md_path = os.path.join(persist_path, "codebase_profile.md")
 
-    with open(json_path, "w") as f:
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(profile.model_dump(), f, indent=2)
 
-    with open(md_path, "w") as f:
+    with open(md_path, "w", encoding="utf-8") as f:
         f.write(render_full_markdown(profile))
 
 
@@ -33,7 +33,7 @@ def load_profile(persist_path: str = _DEFAULT_PERSIST_PATH) -> Optional[Codebase
     if not os.path.exists(json_path):
         return None
 
-    with open(json_path, "r") as f:
+    with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     return CodebaseProfile(**data)
