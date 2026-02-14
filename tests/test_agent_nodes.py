@@ -11,7 +11,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from agent.state import AgentState
+from agent.state import AgentState, empty_working_memory
 from agent.nodes import (
     plan_node,
     setup_executor,
@@ -39,12 +39,10 @@ def _make_state(**overrides) -> dict:
     """Create a minimal AgentState dict with sensible defaults."""
     base = {
         "input": "How does the search engine work?",
-        "chat_history": [],
         "plan": [],
         "current_step": 0,
-        "findings": {},
+        "working_memory": empty_working_memory(),
         "response": "",
-        "loop_decision": "CONTINUE",
         "messages": [],
         "executor_call_count": 0,
         "iteration_count": 0,
@@ -246,6 +244,20 @@ class TestSetupExecutor:
         assert len(new_msgs) == 2
         assert "No more tasks" in new_msgs[0].content
 
+    def test_working_memory_in_system_message(self):
+        """setup_executor should include working memory summary in system message."""
+        wm = empty_working_memory()
+        wm["discovered_entities"] = [{"name": "SearchEngine", "type": "class", "location": "search.py"}]
+        wm["insights"] = ["SearchEngine uses hybrid search"]
+        state = _make_state(
+            plan=[_make_task("Read search.py")],
+            working_memory=wm,
+        )
+        result = setup_executor(state)
+
+        sys_msg = [m for m in result["messages"] if isinstance(m, SystemMessage)][0]
+        assert "SearchEngine" in sys_msg.content
+
 
 # ---------------------------------------------------------------------------
 # executor_llm_node
@@ -341,7 +353,7 @@ class TestRouteExecutor:
 class TestAggregateNode:
 
     def test_collect_findings_from_tool_messages(self):
-        """aggregate_node should collect content from ToolMessages, keyed by task goal."""
+        """aggregate_node should build working_memory from ToolMessage artifacts."""
         msgs = [
             SystemMessage(content="context", id="sys1"),
             HumanMessage(content="task", id="h1"),
@@ -350,7 +362,15 @@ class TestAggregateNode:
                 tool_calls=[{"name": "search_codebase", "args": {"query": "x"}, "id": "tc1"}],
                 id="ai1",
             ),
-            ToolMessage(content="Found class Foo in file.py", tool_call_id="tc1", id="tm1"),
+            ToolMessage(
+                content="Found class Foo in file.py",
+                tool_call_id="tc1",
+                id="tm1",
+                artifact={
+                    "entities": [{"name": "file.py", "type": "file", "location": "file.py"}],
+                    "relationships": [],
+                },
+            ),
             AIMessage(content="Based on results, Foo is a utility class", id="ai2"),
         ]
         state = _make_state(
@@ -363,13 +383,16 @@ class TestAggregateNode:
         )
         result = aggregate_node(state)
 
-        assert "findings" in result
-        assert len(result["findings"]) == 1
-        key = list(result["findings"].keys())[0]
-        assert "task_0" in key
-        assert "Search for Foo" in key
-        assert "Found class Foo" in result["findings"][key]
+        wm = result["working_memory"]
+        assert len(wm["discovered_entities"]) == 1
+        assert wm["discovered_entities"][0]["name"] == "file.py"
+        assert len(wm["task_results"]) == 1
+        assert wm["task_results"][0]["task"] == "Search for Foo"
+        assert "Found class Foo" in wm["task_results"][0]["summary"]
         assert result["current_step"] == 1
+        # AI summary should become an insight
+        assert len(wm["insights"]) == 1
+        assert "Foo is a utility class" in wm["insights"][0]
 
     def test_increment_current_step(self):
         """aggregate_node should advance current_step by 1."""
@@ -393,6 +416,100 @@ class TestAggregateNode:
         remove_msgs = [m for m in result["messages"] if isinstance(m, RemoveMessage)]
         assert len(remove_msgs) == 2
 
+    def test_dedup_entities(self):
+        """aggregate_node should deduplicate entities by name across tool calls."""
+        msgs = [
+            ToolMessage(
+                content="Found Foo",
+                tool_call_id="tc1",
+                id="tm1",
+                artifact={
+                    "entities": [{"name": "Foo", "type": "class", "location": "a.py"}],
+                    "relationships": [],
+                },
+            ),
+            ToolMessage(
+                content="Found Foo again",
+                tool_call_id="tc2",
+                id="tm2",
+                artifact={
+                    "entities": [{"name": "Foo", "type": "class", "location": "a.py"}],
+                    "relationships": [],
+                },
+            ),
+        ]
+        state = _make_state(messages=msgs, plan=[_make_task()])
+        result = aggregate_node(state)
+        assert len(result["working_memory"]["discovered_entities"]) == 1
+
+    def test_merge_relationships(self):
+        """aggregate_node should merge relationships from multiple tool calls."""
+        msgs = [
+            ToolMessage(
+                content="callers of Foo",
+                tool_call_id="tc1",
+                id="tm1",
+                artifact={
+                    "entities": [{"name": "Bar", "type": "function", "location": "b.py"}],
+                    "relationships": [{"source": "Bar", "type": "calls", "target": "Foo"}],
+                },
+            ),
+            ToolMessage(
+                content="callees of Foo",
+                tool_call_id="tc2",
+                id="tm2",
+                artifact={
+                    "entities": [{"name": "Baz", "type": "function", "location": "c.py"}],
+                    "relationships": [{"source": "Foo", "type": "calls", "target": "Baz"}],
+                },
+            ),
+        ]
+        state = _make_state(messages=msgs, plan=[_make_task()])
+        result = aggregate_node(state)
+        wm = result["working_memory"]
+        assert len(wm["discovered_entities"]) == 2
+        assert len(wm["relationships"]) == 2
+
+    def test_accumulate_across_tasks(self):
+        """aggregate_node should preserve entities from previous tasks."""
+        existing_wm = empty_working_memory()
+        existing_wm["discovered_entities"] = [{"name": "OldEntity", "type": "class", "location": "old.py"}]
+        existing_wm["task_results"] = [{"task": "prev task", "step_index": 0, "summary": "found old"}]
+
+        msgs = [
+            ToolMessage(
+                content="Found NewEntity",
+                tool_call_id="tc1",
+                id="tm1",
+                artifact={
+                    "entities": [{"name": "NewEntity", "type": "function", "location": "new.py"}],
+                    "relationships": [],
+                },
+            ),
+        ]
+        state = _make_state(
+            messages=msgs,
+            plan=[_make_task("prev"), _make_task("current")],
+            current_step=1,
+            working_memory=existing_wm,
+        )
+        result = aggregate_node(state)
+        wm = result["working_memory"]
+        assert len(wm["discovered_entities"]) == 2
+        assert len(wm["task_results"]) == 2
+
+    def test_no_artifact_graceful(self):
+        """aggregate_node should handle ToolMessages without artifacts."""
+        msgs = [
+            ToolMessage(content="Some text result", tool_call_id="tc1", id="tm1"),
+            AIMessage(content="Summary", id="ai1"),
+        ]
+        state = _make_state(messages=msgs, plan=[_make_task()])
+        result = aggregate_node(state)
+        wm = result["working_memory"]
+        assert len(wm["task_results"]) == 1
+        assert "Some text result" in wm["task_results"][0]["summary"]
+
 
 # ---------------------------------------------------------------------------
 # refine_node
@@ -400,48 +517,22 @@ class TestAggregateNode:
 
 class TestRefineNode:
 
-    @patch("agent.nodes.get_model")
-    def test_continue_decision(self, mock_get_model):
-        """refine_node should return CONTINUE when LLM decides so."""
-        refine_output = RefineDecision(decision="CONTINUE", reason="Need more info")
-        mock_get_model.return_value = _mock_model_with_structured_output(refine_output)
-
+    def test_returns_empty_dict(self):
+        """refine_node should return an empty dict (logging-only shell)."""
         state = _make_state(
-            findings={"task_0: search": "some results"},
+            working_memory=empty_working_memory(),
             plan=[_make_task("s1"), _make_task("s2")],
-            current_step=1,
-            iteration_count=1,
+            current_step=2,
         )
         result = refine_node(state)
-        assert result["loop_decision"] == "CONTINUE"
+        assert result == {}
 
-    @patch("agent.nodes.get_model")
-    def test_finish_decision(self, mock_get_model):
-        """refine_node should return FINISH when LLM decides so."""
-        refine_output = RefineDecision(decision="FINISH", reason="Sufficient")
-        mock_get_model.return_value = _mock_model_with_structured_output(refine_output)
-
-        state = _make_state(
-            findings={"task_0: search": "complete results"},
-            plan=[_make_task("s1")],
-            current_step=1,
-            iteration_count=1,
-        )
-        result = refine_node(state)
-        assert result["loop_decision"] == "FINISH"
-
-    def test_forced_finish_at_max_iterations(self):
-        """refine_node should force FINISH when max_iterations reached."""
-        from config import config
-
-        original = config.max_iterations
-        try:
-            config.max_iterations = 3
-            state = _make_state(iteration_count=3)
-            result = refine_node(state)
-            assert result["loop_decision"] == "FINISH"
-        finally:
-            config.max_iterations = original
+    def test_no_llm_calls(self):
+        """refine_node should not call the LLM."""
+        state = _make_state()
+        with patch("agent.nodes.get_model") as mock_get_model:
+            refine_node(state)
+            mock_get_model.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -459,11 +550,32 @@ class TestSynthesizeNode:
         )
         mock_get_model.return_value = _mock_model_returning(ai_msg)
 
-        state = _make_state(
-            findings={"task_0: search": "Vector + BM25 hybrid search"},
-        )
+        wm = empty_working_memory()
+        wm["task_results"] = [
+            {"task": "search", "step_index": 0, "summary": "Vector + BM25 hybrid search"},
+        ]
+        state = _make_state(working_memory=wm)
         result = synthesize_node(state)
 
         assert "response" in result
         assert len(result["response"]) > 0
         assert "hybrid search" in result["response"]
+
+    @patch("agent.nodes.get_codebase_context", return_value="")
+    @patch("agent.nodes.get_model")
+    def test_uses_full_working_memory(self, mock_get_model, _mock_ctx):
+        """synthesize_node should use _format_working_memory_for_synthesis."""
+        ai_msg = AIMessage(content="Answer with entities")
+        mock_get_model.return_value = _mock_model_returning(ai_msg)
+
+        wm = empty_working_memory()
+        wm["discovered_entities"] = [{"name": "Foo", "type": "class", "location": "foo.py"}]
+        wm["relationships"] = [{"source": "Bar", "type": "calls", "target": "Foo"}]
+        wm["insights"] = ["Foo is the main class"]
+        wm["task_results"] = [{"task": "find Foo", "step_index": 0, "summary": "Found Foo class"}]
+
+        state = _make_state(working_memory=wm)
+        synthesize_node(state)
+
+        # Verify the model was called (LCEL chains use __call__, not .invoke())
+        mock_get_model.return_value.assert_called()

@@ -11,8 +11,8 @@ messages:
         Suggested Tools: {task_suggested_tools}
         Context Hint: {task_context_hint}
 
-      Previous findings from earlier tasks:
-      {findings}
+      Working memory from earlier tasks:
+      {working_memory}
 
       Instructions:
       - Focus on achieving the goal. Use the success criteria to know when you are done.

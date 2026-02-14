@@ -17,4 +17,4 @@ messages:
       Question: {input}
 
       Research Findings:
-      {findings}
+      {working_memory}

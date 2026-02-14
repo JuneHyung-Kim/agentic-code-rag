@@ -14,32 +14,26 @@ from agent.nodes import (
     synthesize_node,
 )
 from agent.tools import get_tools
-from config import config
 
 logger = logging.getLogger(__name__)
 
 
-def should_continue(state: AgentState) -> str:
-    """
-    Conditional edge function: decides whether to continue planning or synthesize.
+def route_after_aggregate(state: AgentState) -> str:
+    """Conditional edge after aggregate: loop back for remaining tasks or finish.
 
     Returns:
-        "planner" if more research is needed
-        "synthesizer" if ready to generate final answer
+        "setup_executor" if there are more tasks to execute.
+        "refinery" if all tasks are done.
     """
-    decision = state.get("loop_decision", "FINISH")
-    iteration = state.get("iteration_count", 0)
+    current = state.get("current_step", 0)
+    plan = state.get("plan", [])
 
-    if iteration >= config.max_iterations:
-        logger.warning(f"Max iterations ({config.max_iterations}) reached in edge check")
-        return "synthesizer"
+    if current < len(plan):
+        logger.info(f"Tasks remaining: {len(plan) - current}, looping to setup_executor")
+        return "setup_executor"
 
-    if decision == "CONTINUE":
-        logger.info(f"Continuing to planner (iteration {iteration})")
-        return "planner"
-
-    logger.info("Proceeding to synthesizer")
-    return "synthesizer"
+    logger.info("All tasks completed, proceeding to refinery")
+    return "refinery"
 
 
 def define_graph():
@@ -48,13 +42,13 @@ def define_graph():
 
     Flow:
         planner → setup_executor → executor_llm ──→ [route_executor]
-                                       ↑               │
-                                       │         "tools" → tool_node ──┘
-                                       │         "aggregate"
-                                       │               ↓
-                                       │           aggregate → refinery → [should_continue]
-                                                                 ├─ "planner" → planner
-                                                                 └─ "synthesizer" → synthesizer → END
+                       ↑               │
+                       │         "tools" → tool_node ──┘
+                       │         "aggregate"
+                       │               ↓
+                       │           aggregate → [route_after_aggregate]
+                       │              ├─ "setup_executor" → setup_executor (more tasks)
+                       │              └─ "refinery" → refinery → synthesizer → END
     """
     workflow = StateGraph(AgentState)
 
@@ -85,18 +79,18 @@ def define_graph():
         },
     )
 
-    # 5. Linear edge: aggregate → refinery
-    workflow.add_edge("aggregate", "refinery")
-
-    # 6. Conditional edge: refinery → planner or synthesizer
+    # 5. Conditional edge: aggregate → setup_executor (more tasks) or refinery (done)
     workflow.add_conditional_edges(
-        "refinery",
-        should_continue,
+        "aggregate",
+        route_after_aggregate,
         {
-            "planner": "planner",
-            "synthesizer": "synthesizer",
+            "setup_executor": "setup_executor",
+            "refinery": "refinery",
         },
     )
+
+    # 6. Linear edge: refinery → synthesizer (no outer loop)
+    workflow.add_edge("refinery", "synthesizer")
 
     # 7. Terminal edge
     workflow.add_edge("synthesizer", END)

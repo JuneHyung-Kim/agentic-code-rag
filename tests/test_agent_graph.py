@@ -43,18 +43,18 @@ class TestGraphTopology:
         assert ("synthesizer", "__end__") in edges
 
     def test_linear_edges(self, graph_topology):
-        """Verify the 4 direct (non-conditional) edges."""
+        """Verify the direct (non-conditional) edges."""
         edges = [(e.source, e.target) for e in graph_topology.edges]
         expected_linear = [
             ("__start__", "planner"),
             ("planner", "setup_executor"),
             ("setup_executor", "executor_llm"),
             ("tool_node", "executor_llm"),
-            ("aggregate", "refinery"),
+            ("refinery", "synthesizer"),
             ("synthesizer", "__end__"),
         ]
         for src, tgt in expected_linear:
-            assert (src, tgt) in edges, f"Missing edge: {src} → {tgt}"
+            assert (src, tgt) in edges, f"Missing edge: {src} -> {tgt}"
 
     def test_conditional_edges_from_executor_llm(self, graph_topology):
         """executor_llm should have conditional edges to tool_node and aggregate."""
@@ -62,17 +62,27 @@ class TestGraphTopology:
         assert "tool_node" in targets
         assert "aggregate" in targets
 
-    def test_conditional_edges_from_refinery(self, graph_topology):
-        """refinery should have conditional edges to planner and synthesizer."""
+    def test_conditional_edges_from_aggregate(self, graph_topology):
+        """aggregate should have conditional edges to setup_executor and refinery."""
+        targets = {e.target for e in graph_topology.edges if e.source == "aggregate"}
+        assert "setup_executor" in targets
+        assert "refinery" in targets
+
+    def test_no_conditional_edges_from_refinery(self, graph_topology):
+        """refinery should only connect to synthesizer (no outer loop)."""
         targets = {e.target for e in graph_topology.edges if e.source == "refinery"}
-        assert "planner" in targets
-        assert "synthesizer" in targets
+        assert targets == {"synthesizer"}
 
     def test_executor_inner_loop(self, graph_topology):
-        """executor_llm → tool_node and tool_node → executor_llm form a cycle."""
+        """executor_llm -> tool_node and tool_node -> executor_llm form a cycle."""
         edges = [(e.source, e.target) for e in graph_topology.edges]
         assert ("executor_llm", "tool_node") in edges
         assert ("tool_node", "executor_llm") in edges
+
+    def test_multi_task_loop(self, graph_topology):
+        """aggregate -> setup_executor forms the multi-task execution loop."""
+        edges = [(e.source, e.target) for e in graph_topology.edges]
+        assert ("aggregate", "setup_executor") in edges
 
     def test_mermaid_generation(self, graph_topology):
         """draw_mermaid() should produce a valid Mermaid string."""

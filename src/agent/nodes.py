@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 from datetime import datetime
@@ -14,7 +15,7 @@ from langchain_core.messages import (
 from langchain_core.output_parsers import StrOutputParser
 
 from config import config
-from agent.state import AgentState
+from agent.state import AgentState, empty_working_memory
 from agent.model import get_model, get_model_with_tools
 from profiling.profile_store import get_codebase_context
 from agent.prompts import (
@@ -32,12 +33,97 @@ logger = logging.getLogger(__name__)
 PLAN_LOG_DIR = Path("./logs/plans")
 
 
-# -- Helper ------------------------------------------------------------------
+# -- Helpers -----------------------------------------------------------------
 
-def _format_findings(findings: Dict[str, Any], max_len: int = 200) -> str:
-    return "\n".join(
-        f"- {k}: {str(v)[:max_len]}..." for k, v in findings.items()
-    )
+def _deep_copy_working_memory(wm: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a deep copy of working memory to avoid mutating state."""
+    return copy.deepcopy(wm)
+
+
+def _format_working_memory(wm: Dict[str, Any], max_entities: int = 20) -> str:
+    """Format working memory into a compact summary for executor/planner context.
+
+    Shows entity count, key relationships, recent insights, and task result summaries.
+    """
+    parts = []
+
+    entities = wm.get("discovered_entities", [])
+    if entities:
+        shown = entities[:max_entities]
+        names = [e.get("name", str(e)) if isinstance(e, dict) else str(e) for e in shown]
+        parts.append(f"Entities ({len(entities)}): {', '.join(names)}")
+        if len(entities) > max_entities:
+            parts.append(f"  ... and {len(entities) - max_entities} more")
+
+    rels = wm.get("relationships", [])
+    if rels:
+        shown = rels[:10]
+        for r in shown:
+            if isinstance(r, dict):
+                parts.append(f"  {r.get('source', '?')} --{r.get('type', '?')}--> {r.get('target', '?')}")
+            else:
+                parts.append(f"  {r}")
+        if len(rels) > 10:
+            parts.append(f"  ... and {len(rels) - 10} more relationships")
+
+    insights = wm.get("insights", [])
+    if insights:
+        parts.append("Insights:")
+        for ins in insights[-5:]:
+            parts.append(f"  - {ins}")
+
+    task_results = wm.get("task_results", [])
+    if task_results:
+        parts.append("Completed tasks:")
+        for tr in task_results:
+            parts.append(f"  - [{tr.get('task', '?')}]: {tr.get('summary', '')[:150]}")
+
+    return "\n".join(parts) if parts else "No findings yet."
+
+
+def _format_working_memory_for_synthesis(wm: Dict[str, Any]) -> str:
+    """Format working memory as a full dump for the synthesizer node.
+
+    Provides all details without truncation so the synthesizer can produce
+    a comprehensive answer.
+    """
+    parts = []
+
+    entities = wm.get("discovered_entities", [])
+    if entities:
+        parts.append(f"## Discovered Entities ({len(entities)})")
+        for e in entities:
+            if isinstance(e, dict):
+                name = e.get("name", "unknown")
+                etype = e.get("type", "")
+                loc = e.get("location", "")
+                parts.append(f"- **{name}** ({etype}) {f'@ {loc}' if loc else ''}")
+            else:
+                parts.append(f"- {e}")
+
+    rels = wm.get("relationships", [])
+    if rels:
+        parts.append(f"\n## Relationships ({len(rels)})")
+        for r in rels:
+            if isinstance(r, dict):
+                parts.append(f"- {r.get('source', '?')} --{r.get('type', '?')}--> {r.get('target', '?')}")
+            else:
+                parts.append(f"- {r}")
+
+    insights = wm.get("insights", [])
+    if insights:
+        parts.append("\n## Insights")
+        for ins in insights:
+            parts.append(f"- {ins}")
+
+    task_results = wm.get("task_results", [])
+    if task_results:
+        parts.append("\n## Task Results")
+        for tr in task_results:
+            parts.append(f"### {tr.get('task', 'Unknown task')}")
+            parts.append(tr.get("summary", "No summary"))
+
+    return "\n".join(parts) if parts else "No findings accumulated."
 
 
 def _save_plan_log(
@@ -84,6 +170,39 @@ def _get_current_task(state: AgentState) -> Dict[str, Any]:
     return plan[idx]
 
 
+def _merge_entities(existing: List[Dict], new_entities: List[Dict]) -> List[Dict]:
+    """Merge new entities into existing list, deduplicating by name."""
+    seen = {e.get("name") for e in existing if isinstance(e, dict) and e.get("name")}
+    merged = list(existing)
+    for ent in new_entities:
+        name = ent.get("name") if isinstance(ent, dict) else None
+        if name and name not in seen:
+            seen.add(name)
+            merged.append(ent)
+        elif not name:
+            merged.append(ent)
+    return merged
+
+
+def _merge_relationships(existing: List[Dict], new_rels: List[Dict]) -> List[Dict]:
+    """Merge new relationships into existing list, deduplicating by (source, type, target)."""
+    seen = set()
+    for r in existing:
+        if isinstance(r, dict):
+            key = (r.get("source"), r.get("type"), r.get("target"))
+            seen.add(key)
+    merged = list(existing)
+    for r in new_rels:
+        if isinstance(r, dict):
+            key = (r.get("source"), r.get("type"), r.get("target"))
+            if key not in seen:
+                seen.add(key)
+                merged.append(r)
+        else:
+            merged.append(r)
+    return merged
+
+
 # -- Nodes -------------------------------------------------------------------
 
 def plan_node(state: AgentState) -> Dict[str, Any]:
@@ -91,7 +210,8 @@ def plan_node(state: AgentState) -> Dict[str, Any]:
     logger.info("--- PLANNING ---")
     model = get_model()
 
-    findings_str = _format_findings(state.get("findings", {}))
+    wm = state.get("working_memory", empty_working_memory())
+    wm_str = _format_working_memory(wm)
 
     iteration = state.get("iteration_count", 0)
     if iteration > 0:
@@ -110,7 +230,7 @@ def plan_node(state: AgentState) -> Dict[str, Any]:
     try:
         result = chain.invoke({
             "input": state["input"],
-            "findings": findings_str,
+            "working_memory": wm_str,
             "codebase_context": codebase_ctx,
         })
         tasks = result.tasks
@@ -149,7 +269,8 @@ def setup_executor(state: AgentState) -> Dict[str, Any]:
 
     logger.info(f"Task {idx + 1}/{len(plan)}: {task['goal']}")
 
-    findings_str = _format_findings(state.get("findings", {}), max_len=150)
+    wm = state.get("working_memory", empty_working_memory())
+    wm_str = _format_working_memory(wm)
 
     # Clear old messages
     remove_msgs = [RemoveMessage(id=m.id) for m in state.get("messages", []) if m.id]
@@ -161,7 +282,7 @@ def setup_executor(state: AgentState) -> Dict[str, Any]:
         task_abort_criteria=task["abort_criteria"],
         task_suggested_tools=", ".join(task.get("suggested_tools", [])) or "none specified",
         task_context_hint=task.get("context_hint") or "none",
-        findings=findings_str,
+        working_memory=wm_str,
     )
     sys_msg = formatted[0]
     user_msg = formatted[1]
@@ -215,8 +336,8 @@ def route_executor(state: AgentState) -> str:
 def aggregate_node(state: AgentState) -> Dict[str, Any]:
     """Extract findings from tool messages and advance current_step.
 
-    Collects content from ToolMessage entries and the final AIMessage summary,
-    stores them in findings keyed by task goal, then clears messages.
+    Collects structured artifacts from ToolMessage entries to update working_memory,
+    and stores the AI summary in task_results.
     """
     logger.info("--- AGGREGATE ---")
 
@@ -224,61 +345,77 @@ def aggregate_node(state: AgentState) -> Dict[str, Any]:
     task = _get_current_task(state)
     current_step_idx = state.get("current_step", 0)
 
-    # Collect tool results and the final AI summary
-    parts = []
+    wm = _deep_copy_working_memory(state.get("working_memory", empty_working_memory()))
+
+    # Extract artifacts from ToolMessages and collect text parts
+    text_parts = []
     for msg in messages:
-        if isinstance(msg, ToolMessage) and msg.content:
-            parts.append(msg.content)
+        if isinstance(msg, ToolMessage):
+            # Extract structured artifact if present
+            artifact = getattr(msg, "artifact", None)
+            if artifact and isinstance(artifact, dict):
+                new_entities = artifact.get("entities", [])
+                new_rels = artifact.get("relationships", [])
+                if new_entities:
+                    wm["discovered_entities"] = _merge_entities(
+                        wm["discovered_entities"], new_entities
+                    )
+                if new_rels:
+                    wm["relationships"] = _merge_relationships(
+                        wm["relationships"], new_rels
+                    )
+            if msg.content:
+                text_parts.append(msg.content)
         elif isinstance(msg, AIMessage) and not msg.tool_calls and msg.content:
-            parts.append(msg.content)
+            # Final AI summary — treat as an insight
+            wm["insights"].append(msg.content)
+            text_parts.append(msg.content)
 
-    combined = "\n---\n".join(parts) if parts else "No results found"
-    finding_key = f"task_{current_step_idx}: {task['goal']}"
+    combined = "\n---\n".join(text_parts) if text_parts else "No results found"
 
-    old_findings = dict(state.get("findings", {}))
-    old_findings[finding_key] = combined
+    # Record task result
+    wm["task_results"].append({
+        "task": task["goal"],
+        "step_index": current_step_idx,
+        "summary": combined,
+    })
+
+    logger.info(
+        f"  Working memory: {len(wm['discovered_entities'])} entities, "
+        f"{len(wm['relationships'])} relationships, "
+        f"{len(wm['insights'])} insights, "
+        f"{len(wm['task_results'])} task results"
+    )
 
     # Clear messages for next step
     remove_msgs = [RemoveMessage(id=m.id) for m in messages if m.id]
 
     return {
-        "findings": old_findings,
+        "working_memory": wm,
         "current_step": current_step_idx + 1,
         "messages": remove_msgs,
     }
 
 
 def refine_node(state: AgentState) -> Dict[str, Any]:
-    """Evaluate findings and decide whether to continue research or finish."""
-    logger.info("--- REFINING ---")
-    model = get_model()
+    """Logging-only pass-through before synthesis.
 
-    iteration = state.get("iteration_count", 0)
-    if iteration >= config.max_iterations:
-        logger.warning(f"Max iterations ({config.max_iterations}) reached, forcing FINISH")
-        return {"loop_decision": "FINISH"}
+    The outer loop has been removed; this node now serves as an
+    observability checkpoint between aggregation and synthesis.
+    """
+    logger.info("--- REFINERY ---")
 
-    findings_str = _format_findings(state.get("findings", {}), max_len=300)
+    wm = state.get("working_memory", empty_working_memory())
     current = state.get("current_step", 0)
     total = len(state.get("plan", []))
 
-    chain = REFINE_PROMPT | model.with_structured_output(RefineDecision)
+    logger.info(
+        f"  Completed {current}/{total} tasks | "
+        f"{len(wm.get('discovered_entities', []))} entities | "
+        f"{len(wm.get('task_results', []))} results"
+    )
 
-    try:
-        result = chain.invoke({
-            "input": state["input"],
-            "findings": findings_str,
-            "step": current,
-            "total": total,
-        })
-        decision = result.decision
-        reason = result.reason
-        logger.info(f"Refinery decision: {decision} - {reason}")
-    except Exception as e:
-        logger.warning(f"Refinery failed: {e}")
-        decision = "CONTINUE" if current < total else "FINISH"
-
-    return {"loop_decision": decision}
+    return {}
 
 
 def synthesize_node(state: AgentState) -> Dict[str, Any]:
@@ -286,16 +423,15 @@ def synthesize_node(state: AgentState) -> Dict[str, Any]:
     logger.info("--- SYNTHESIZING ---")
     model = get_model()
 
-    findings_str = "\n".join(
-        f"### {k}\n{v}\n" for k, v in state.get("findings", {}).items()
-    )
+    wm = state.get("working_memory", empty_working_memory())
+    wm_str = _format_working_memory_for_synthesis(wm)
 
     codebase_ctx = get_codebase_context() or "No codebase profile available. Run 'init' to generate one."
 
     chain = SYNTHESIZE_PROMPT | model | StrOutputParser()
     response = chain.invoke({
         "input": state["input"],
-        "findings": findings_str,
+        "working_memory": wm_str,
         "codebase_context": codebase_ctx,
     })
 
