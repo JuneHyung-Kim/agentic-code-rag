@@ -39,13 +39,11 @@ def init_project(project_path: str, use_llm: bool = True):
     builder = ProfileBuilder(get_vector_store(), get_graph_store(), project_path)
     profile = builder.build()
 
-    '''
     # Phase 3: Optional LLM synthesis
     if use_llm:
-        print("Generating AI summary...")
-        from profiling.synthesizer import synthesize_summary
-        profile.ai_summary = synthesize_summary(profile)
-    '''
+        print("Generating AI synthesis (two-step)...")
+        from profiling.synthesizer import synthesize_profile
+        synthesize_profile(profile)
 
     # Phase 4: Persist
     save_profile(profile)
@@ -175,7 +173,7 @@ def main():
     # Init command
     init_parser = subparsers.add_parser("init", help="Index a project and generate a codebase profile")
     init_parser.add_argument("path", help="Path to the project to index and profile")
-    init_parser.add_argument("--no-llm", action="store_true", help="Skip LLM-generated summary")
+    init_parser.add_argument("--llm", action="store_true", help="Enable LLM-based two-step synthesis")
 
     # Chat command
     chat_parser = subparsers.add_parser("chat", help="Start a chat session with the AI Agent")
@@ -186,7 +184,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == "init":
-        init_project(args.path, use_llm=not args.no_llm)
+        init_project(args.path, use_llm=args.llm)
     elif args.command == "index":
         index_project(args.path)
     elif args.command == "search":

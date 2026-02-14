@@ -47,6 +47,9 @@ def render_full_markdown(profile: CodebaseProfile) -> str:
         lines.append("## Module Map")
         for fm in profile.module_map:
             lines.append(f"### `{fm.relative_path}` ({fm.language})")
+            if fm.summary:
+                lines.append(f"> {fm.summary}")
+                lines.append("")
             for sym in fm.symbols:
                 sig = f" — `{sym.signature}`" if sym.signature else ""
                 lines.append(f"- {sym.type} **{sym.name}** (L{sym.start_line}){sig}")
@@ -116,8 +119,21 @@ def _render_tree_children(node: DirectoryNode, lines: list, prefix: str) -> None
             lines.append(f"{prefix}{connector}{child.name}")
 
 
-def render_prompt_context(profile: CodebaseProfile, max_length: int = 2000) -> str:
-    """Render a condensed version for LLM prompt injection."""
+def render_prompt_context(profile: CodebaseProfile, max_length: int = 6000) -> str:
+    """Render a condensed version for LLM prompt injection.
+
+    If an AI-generated summary exists, it is included in full (up to max_length)
+    rather than being truncated to 300 chars.
+    """
+    # If ai_summary is available, use it as the primary context
+    if profile.ai_summary:
+        header = f"Project: {profile.project_root}\n"
+        result = header + profile.ai_summary
+        if len(result) > max_length:
+            result = result[:max_length - 3] + "..."
+        return result
+
+    # Fallback: stats-based summary
     lines = [f"Project: {profile.project_root}"]
     lines.append(f"Files: {profile.total_files}, Symbols: {profile.total_symbols}")
 
@@ -154,10 +170,6 @@ def render_prompt_context(profile: CodebaseProfile, max_length: int = 2000) -> s
         if gs.most_called:
             names = [item["name"] for item in gs.most_called[:3]]
             lines.append(f"Most called: {', '.join(names)}")
-
-    # AI summary (truncated)
-    if profile.ai_summary:
-        lines.append(f"Summary: {profile.ai_summary[:300]}")
 
     result = "\n".join(lines)
     if len(result) > max_length:

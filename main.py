@@ -12,7 +12,7 @@ from indexing.indexer import CodeIndexer
 from indexing.storage.vector_store import get_vector_store
 from indexing.storage.graph_store import get_graph_store
 from profiling.builder import ProfileBuilder
-from profiling.synthesizer import synthesize_summary
+from profiling.synthesizer import synthesize_profile
 from profiling.profile_store import save_profile, reset_profile_cache
 from agent.model import APICallCancelled
 from agent.core import CodeAgent
@@ -56,20 +56,19 @@ def main():
         print(f"  Profile build failed: {e}")
         return
 
-    # --- Phase 3: AI summary (first LLM call — confirmation may trigger) ---
-    print("\n[3/4] Generating AI summary...")
-    try:
-        summary = synthesize_summary(profile)
-        if summary:
-            profile.ai_summary = summary
-            print("  AI summary generated.")
-        else:
-            print("  AI summary empty (model returned nothing).")
-    except APICallCancelled:
-        print("  Skipped AI summary (user declined API call).")
-    except Exception as e:
-        print(f"  AI summary failed: {e}")
-        print("  Continuing without AI summary.")
+    # --- Phase 3: AI synthesis (first LLM call — confirmation may trigger) ---
+    use_llm = os.environ.get("CODE_RAG_LLM_INIT", "").lower() in ("1", "true", "yes")
+    if use_llm:
+        print("\n[3/4] Generating AI synthesis (two-step)...")
+        try:
+            synthesize_profile(profile)
+        except APICallCancelled:
+            print("  Skipped AI synthesis (user declined API call).")
+        except Exception as e:
+            print(f"  AI synthesis failed: {e}")
+            print("  Continuing without AI synthesis.")
+    else:
+        print("\n[3/4] Skipping AI synthesis (set CODE_RAG_LLM_INIT=1 to enable)")
 
     # --- Phase 4: Save profile ---
     print("\n[4/4] Saving profile...")

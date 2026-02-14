@@ -28,6 +28,7 @@ class FileSummary(BaseModel):
     relative_path: str
     language: str = ""
     symbols: List[SymbolSummary] = Field(default_factory=list)
+    summary: Optional[str] = None
 
 
 class EntryPoint(BaseModel):

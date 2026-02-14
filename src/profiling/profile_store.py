@@ -40,10 +40,16 @@ def load_profile(persist_path: str = _DEFAULT_PERSIST_PATH) -> Optional[Codebase
 
 
 def load_prompt_context(persist_path: str = _DEFAULT_PERSIST_PATH) -> Optional[str]:
-    """Load profile and render condensed prompt context."""
+    """Load profile and return the best available context.
+
+    Prefers the AI-generated summary (ai_summary) when available,
+    falling back to the stats-based render_prompt_context().
+    """
     profile = load_profile(persist_path)
     if profile is None:
         return None
+    if profile.ai_summary:
+        return profile.ai_summary
     return render_prompt_context(profile)
 
 
