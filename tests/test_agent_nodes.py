@@ -21,7 +21,18 @@ from agent.nodes import (
     refine_node,
     synthesize_node,
 )
-from agent.prompts import PlanOutput, RefineDecision
+from agent.prompts import Task, PlanOutput, RefineDecision
+
+
+def _make_task(goal="Search for code", **overrides) -> dict:
+    """Create a minimal task dict with sensible defaults."""
+    base = {
+        "goal": goal,
+        "success_criteria": "Found relevant code",
+        "abort_criteria": "No results after 2 attempts",
+    }
+    base.update(overrides)
+    return base
 
 
 def _make_state(**overrides) -> dict:
@@ -71,11 +82,24 @@ def _mock_model_with_structured_output(output_obj):
 
 class TestPlanNode:
 
+    @patch("agent.nodes._save_plan_log")
     @patch("agent.nodes.get_codebase_context", return_value="")
     @patch("agent.nodes.get_model")
-    def test_normal_plan_generation(self, mock_get_model, _mock_ctx):
-        """plan_node should return a list of steps from LLM output."""
-        plan_output = PlanOutput(steps=["Search for SearchEngine class", "Read the file"])
+    def test_normal_plan_generation(self, mock_get_model, _mock_ctx, _mock_save):
+        """plan_node should return a list of task dicts from LLM output."""
+        plan_output = PlanOutput(tasks=[
+            Task(
+                goal="Search for SearchEngine class",
+                success_criteria="Found the class definition",
+                abort_criteria="No results after 2 attempts",
+                suggested_tools=["search"],
+            ),
+            Task(
+                goal="Read the SearchEngine implementation",
+                success_criteria="Understood the hybrid search logic",
+                abort_criteria="File too large to parse",
+            ),
+        ])
         mock_get_model.return_value = _mock_model_with_structured_output(plan_output)
 
         state = _make_state()
@@ -84,13 +108,18 @@ class TestPlanNode:
         assert "plan" in result
         assert isinstance(result["plan"], list)
         assert len(result["plan"]) == 2
+        assert result["plan"][0]["goal"] == "Search for SearchEngine class"
+        assert result["plan"][0]["success_criteria"] == "Found the class definition"
+        assert "suggested_tools" in result["plan"][0]
+        assert result["plan"][1]["goal"] == "Read the SearchEngine implementation"
         assert result["current_step"] == 0
         assert result["iteration_count"] == 1
 
+    @patch("agent.nodes._save_plan_log")
     @patch("agent.nodes.get_codebase_context", return_value="")
     @patch("agent.nodes.get_model")
-    def test_fallback_plan_on_error(self, mock_get_model, _mock_ctx):
-        """If LLM fails, plan_node should return fallback plan."""
+    def test_fallback_plan_on_error(self, mock_get_model, _mock_ctx, _mock_save):
+        """If LLM fails, plan_node should return fallback task."""
         mock_model = MagicMock()
         mock_runnable = MagicMock()
         mock_runnable.invoke.side_effect = Exception("API error")
@@ -101,19 +130,53 @@ class TestPlanNode:
         state = _make_state()
         result = plan_node(state)
 
-        assert result["plan"] == ["Search for relevant code related to the query"]
+        assert len(result["plan"]) == 1
+        assert result["plan"][0]["goal"] == "Search for relevant code related to the query"
+        assert "success_criteria" in result["plan"][0]
+        assert "abort_criteria" in result["plan"][0]
         assert result["current_step"] == 0
 
+    @patch("agent.nodes._save_plan_log")
     @patch("agent.nodes.get_codebase_context", return_value="")
     @patch("agent.nodes.get_model")
-    def test_iteration_count_increments(self, mock_get_model, _mock_ctx):
+    def test_iteration_count_increments(self, mock_get_model, _mock_ctx, _mock_save):
         """iteration_count should increment on each call."""
-        plan_output = PlanOutput(steps=["step1"])
+        plan_output = PlanOutput(tasks=[
+            Task(
+                goal="step1",
+                success_criteria="done",
+                abort_criteria="fail",
+            ),
+        ])
         mock_get_model.return_value = _mock_model_with_structured_output(plan_output)
 
         state = _make_state(iteration_count=2)
         result = plan_node(state)
         assert result["iteration_count"] == 3
+
+    @patch("agent.nodes.get_codebase_context", return_value="some profile")
+    @patch("agent.nodes.get_model")
+    def test_plan_log_is_saved(self, mock_get_model, _mock_ctx, tmp_path):
+        """plan_node should persist the plan to a JSON log file."""
+        plan_output = PlanOutput(tasks=[
+            Task(goal="find entry point", success_criteria="found", abort_criteria="not found"),
+        ])
+        mock_get_model.return_value = _mock_model_with_structured_output(plan_output)
+
+        with patch("agent.nodes.PLAN_LOG_DIR", tmp_path):
+            state = _make_state()
+            plan_node(state)
+
+        log_files = list(tmp_path.glob("plan_*.json"))
+        assert len(log_files) == 1
+
+        import json
+        with open(log_files[0]) as f:
+            log_data = json.load(f)
+        assert log_data["query"] == "How does the search engine work?"
+        assert len(log_data["tasks"]) == 1
+        assert log_data["tasks"][0]["goal"] == "find entry point"
+        assert log_data["iteration"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -123,18 +186,43 @@ class TestPlanNode:
 class TestSetupExecutor:
 
     def test_message_initialization(self):
-        """setup_executor should create SystemMessage + HumanMessage."""
-        state = _make_state(plan=["Search for code", "Read file"])
+        """setup_executor should create SystemMessage + HumanMessage with task fields."""
+        state = _make_state(plan=[
+            _make_task("Search for relevant code"),
+            _make_task("Read the file"),
+        ])
         result = setup_executor(state)
 
         new_msgs = [m for m in result["messages"] if not isinstance(m, RemoveMessage)]
         assert len(new_msgs) == 2
         assert isinstance(new_msgs[0], SystemMessage)
         assert isinstance(new_msgs[1], HumanMessage)
+        # Task goal should appear in the messages
+        assert "Search for relevant code" in new_msgs[0].content
+
+    def test_task_fields_in_system_message(self):
+        """setup_executor should include success/abort criteria in the system message."""
+        state = _make_state(plan=[
+            _make_task(
+                goal="Find swap functions",
+                success_criteria="Located the swap entry point",
+                abort_criteria="3 failed searches",
+                suggested_tools=["search", "related_code"],
+                context_hint="Check mm/swap.c",
+            ),
+        ])
+        result = setup_executor(state)
+
+        sys_msg = [m for m in result["messages"] if isinstance(m, SystemMessage)][0]
+        assert "Find swap functions" in sys_msg.content
+        assert "Located the swap entry point" in sys_msg.content
+        assert "3 failed searches" in sys_msg.content
+        assert "search, related_code" in sys_msg.content
+        assert "Check mm/swap.c" in sys_msg.content
 
     def test_executor_call_count_reset(self):
         """setup_executor should reset executor_call_count to 0."""
-        state = _make_state(executor_call_count=5, plan=["step1"])
+        state = _make_state(executor_call_count=5, plan=[_make_task()])
         result = setup_executor(state)
         assert result["executor_call_count"] == 0
 
@@ -144,7 +232,7 @@ class TestSetupExecutor:
             HumanMessage(content="old1", id="msg1"),
             AIMessage(content="old2", id="msg2"),
         ]
-        state = _make_state(messages=old_msgs, plan=["step1"])
+        state = _make_state(messages=old_msgs, plan=[_make_task()])
         result = setup_executor(state)
 
         remove_msgs = [m for m in result["messages"] if isinstance(m, RemoveMessage)]
@@ -156,7 +244,7 @@ class TestSetupExecutor:
         result = setup_executor(state)
         new_msgs = [m for m in result["messages"] if not isinstance(m, RemoveMessage)]
         assert len(new_msgs) == 2
-        assert "No more steps" in new_msgs[0].content
+        assert "No more tasks" in new_msgs[0].content
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +341,7 @@ class TestRouteExecutor:
 class TestAggregateNode:
 
     def test_collect_findings_from_tool_messages(self):
-        """aggregate_node should collect content from ToolMessages."""
+        """aggregate_node should collect content from ToolMessages, keyed by task goal."""
         msgs = [
             SystemMessage(content="context", id="sys1"),
             HumanMessage(content="task", id="h1"),
@@ -267,7 +355,10 @@ class TestAggregateNode:
         ]
         state = _make_state(
             messages=msgs,
-            plan=["Search for Foo", "Read file"],
+            plan=[
+                _make_task("Search for Foo"),
+                _make_task("Read file"),
+            ],
             current_step=0,
         )
         result = aggregate_node(state)
@@ -275,7 +366,8 @@ class TestAggregateNode:
         assert "findings" in result
         assert len(result["findings"]) == 1
         key = list(result["findings"].keys())[0]
-        assert "step_0" in key
+        assert "task_0" in key
+        assert "Search for Foo" in key
         assert "Found class Foo" in result["findings"][key]
         assert result["current_step"] == 1
 
@@ -283,7 +375,7 @@ class TestAggregateNode:
         """aggregate_node should advance current_step by 1."""
         state = _make_state(
             messages=[AIMessage(content="done", id="a1")],
-            plan=["s1", "s2", "s3"],
+            plan=[_make_task("s1"), _make_task("s2"), _make_task("s3")],
             current_step=1,
         )
         result = aggregate_node(state)
@@ -295,7 +387,7 @@ class TestAggregateNode:
             HumanMessage(content="task", id="h1"),
             AIMessage(content="result", id="a1"),
         ]
-        state = _make_state(messages=msgs, plan=["step1"])
+        state = _make_state(messages=msgs, plan=[_make_task()])
         result = aggregate_node(state)
 
         remove_msgs = [m for m in result["messages"] if isinstance(m, RemoveMessage)]
@@ -315,8 +407,8 @@ class TestRefineNode:
         mock_get_model.return_value = _mock_model_with_structured_output(refine_output)
 
         state = _make_state(
-            findings={"step_0: search": "some results"},
-            plan=["s1", "s2"],
+            findings={"task_0: search": "some results"},
+            plan=[_make_task("s1"), _make_task("s2")],
             current_step=1,
             iteration_count=1,
         )
@@ -330,8 +422,8 @@ class TestRefineNode:
         mock_get_model.return_value = _mock_model_with_structured_output(refine_output)
 
         state = _make_state(
-            findings={"step_0: search": "complete results"},
-            plan=["s1"],
+            findings={"task_0: search": "complete results"},
+            plan=[_make_task("s1")],
             current_step=1,
             iteration_count=1,
         )
@@ -368,7 +460,7 @@ class TestSynthesizeNode:
         mock_get_model.return_value = _mock_model_returning(ai_msg)
 
         state = _make_state(
-            findings={"step_0: search": "Vector + BM25 hybrid search"},
+            findings={"task_0: search": "Vector + BM25 hybrid search"},
         )
         result = synthesize_node(state)
 

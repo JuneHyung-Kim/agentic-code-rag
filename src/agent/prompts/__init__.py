@@ -7,7 +7,7 @@ Schemas:  PlanOutput, RefineDecision
 """
 
 from agent.prompts.loader import load_prompt
-from agent.prompts.schemas import PlanOutput, RefineDecision
+from agent.prompts.schemas import Task, PlanOutput, RefineDecision
 
 PLAN_PROMPT = load_prompt("plan")
 EXECUTOR_PROMPT = load_prompt("executor")
@@ -19,6 +19,7 @@ __all__ = [
     "EXECUTOR_PROMPT",
     "REFINE_PROMPT",
     "SYNTHESIZE_PROMPT",
+    "Task",
     "PlanOutput",
     "RefineDecision",
 ]

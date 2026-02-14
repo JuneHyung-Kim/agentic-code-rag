@@ -6,25 +6,58 @@ from unittest.mock import patch, MagicMock
 from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.graph import define_graph
+from agent.prompts import Task, PlanOutput, RefineDecision
 
 
-def _make_model_mock(responses):
-    """Create a mock model that returns different AIMessages on successive calls.
+def _make_structured_output_side_effect(outputs_by_schema):
+    """Create a with_structured_output mock that returns different runnables per schema.
 
-    Works with both LCEL chain __call__ and direct .invoke() patterns.
+    Args:
+        outputs_by_schema: dict mapping schema class → output object(s).
+            If the value is a list, successive calls return successive items.
+    """
+    # Track call index per schema
+    call_idx = {}
+
+    def with_structured_output(schema, **kwargs):
+        mock_runnable = MagicMock()
+        key = schema.__name__ if hasattr(schema, "__name__") else str(schema)
+
+        if key not in call_idx:
+            call_idx[key] = 0
+
+        val = outputs_by_schema.get(schema)
+        if isinstance(val, list):
+            # Return successive items on each invoke
+            def invoke_side_effect(*args, **kw):
+                i = call_idx[key]
+                call_idx[key] = i + 1
+                return val[i] if i < len(val) else val[-1]
+
+            mock_runnable.invoke.side_effect = invoke_side_effect
+            mock_runnable.side_effect = invoke_side_effect
+        else:
+            mock_runnable.invoke.return_value = val
+            mock_runnable.return_value = val
+
+        return mock_runnable
+
+    return with_structured_output
+
+
+def _make_base_model_mock(structured_outputs, synth_response):
+    """Create a mock for get_model() that handles both structured output and LCEL chains.
+
+    - with_structured_output() → dispatches by schema class
+    - Direct __call__ / invoke → returns synth_response (for synthesize_node's LCEL chain)
     """
     mock = MagicMock()
-    idx = {"n": 0}
-
-    def side_effect(*args, **kwargs):
-        i = idx["n"]
-        idx["n"] += 1
-        if i < len(responses):
-            return responses[i]
-        return responses[-1]  # repeat last response if called extra times
-
-    mock.side_effect = side_effect
-    mock.invoke.side_effect = side_effect
+    mock.with_structured_output.side_effect = _make_structured_output_side_effect(
+        structured_outputs
+    )
+    # For synthesize_node: PLAN_PROMPT | model | StrOutputParser()
+    mock.return_value = synth_response
+    mock.invoke.return_value = synth_response
     return mock
 
 
@@ -35,20 +68,29 @@ def _make_model_mock(responses):
 class TestMockedE2E:
     """Full graph cycle with both get_model and get_model_with_tools mocked."""
 
+    @patch("agent.nodes._save_plan_log")
     @patch("agent.nodes.get_model_with_tools")
     @patch("agent.nodes.get_model")
-    def test_full_graph_cycle(self, mock_get_model, mock_get_mwt):
+    def test_full_graph_cycle(self, mock_get_model, mock_get_mwt, _mock_save):
         """Run planner → executor (no tool calls) → refine (FINISH) → synthesize."""
 
-        # Base model: planner → refinery → synthesizer
-        mock_get_model.return_value = _make_model_mock([
-            # Planner
-            AIMessage(content='["Search for main function"]'),
-            # Refinery
-            AIMessage(content='{"decision": "FINISH", "reason": "Sufficient info"}'),
-            # Synthesizer
-            AIMessage(content="The main function is the entry point of the program."),
-        ])
+        mock_get_model.return_value = _make_base_model_mock(
+            structured_outputs={
+                PlanOutput: PlanOutput(tasks=[
+                    Task(
+                        goal="Search for main function",
+                        success_criteria="Found the entry point",
+                        abort_criteria="No results after 2 attempts",
+                    ),
+                ]),
+                RefineDecision: RefineDecision(
+                    decision="FINISH", reason="Sufficient info"
+                ),
+            },
+            synth_response=AIMessage(
+                content="The main function is the entry point of the program."
+            ),
+        )
 
         # Tools model: executor_llm (no tool calls → goes to aggregate)
         executor_mock = MagicMock()
@@ -76,23 +118,37 @@ class TestMockedE2E:
         assert final_state["iteration_count"] >= 1
         assert len(final_state["findings"]) >= 1
 
+    @patch("agent.nodes._save_plan_log")
     @patch("agent.nodes.get_model_with_tools")
     @patch("agent.nodes.get_model")
-    def test_continue_then_finish(self, mock_get_model, mock_get_mwt):
+    def test_continue_then_finish(self, mock_get_model, mock_get_mwt, _mock_save):
         """Verify CONTINUE loops back to planner before finishing."""
 
-        mock_get_model.return_value = _make_model_mock([
-            # Planner iteration 1
-            AIMessage(content='["Search for SearchEngine"]'),
-            # Refinery iteration 1: CONTINUE
-            AIMessage(content='{"decision": "CONTINUE", "reason": "Need more"}'),
-            # Planner iteration 2
-            AIMessage(content='["Read the search_engine.py file"]'),
-            # Refinery iteration 2: FINISH
-            AIMessage(content='{"decision": "FINISH", "reason": "Complete"}'),
-            # Synthesizer
-            AIMessage(content="SearchEngine uses hybrid search."),
-        ])
+        mock_get_model.return_value = _make_base_model_mock(
+            structured_outputs={
+                PlanOutput: [
+                    PlanOutput(tasks=[
+                        Task(
+                            goal="Search for SearchEngine",
+                            success_criteria="Found the class",
+                            abort_criteria="Not found",
+                        ),
+                    ]),
+                    PlanOutput(tasks=[
+                        Task(
+                            goal="Read the search_engine.py file",
+                            success_criteria="Understood hybrid search",
+                            abort_criteria="File too large",
+                        ),
+                    ]),
+                ],
+                RefineDecision: [
+                    RefineDecision(decision="CONTINUE", reason="Need more"),
+                    RefineDecision(decision="FINISH", reason="Complete"),
+                ],
+            },
+            synth_response=AIMessage(content="SearchEngine uses hybrid search."),
+        )
 
         executor_mock = MagicMock()
         executor_mock.invoke.return_value = AIMessage(

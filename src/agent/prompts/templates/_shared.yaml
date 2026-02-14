@@ -1,8 +1,59 @@
 planning_guidelines: |-
-  - If findings are partially sufficient, create a plan to find ONLY the MISSING information.
-  - Keep steps granular and actionable.
-  - Each step should be achievable with one or two tool calls.
-  - If you have enough information, return a single step: ["Synthesize the final answer"]
+  - Produce 3–5 tasks. Each task states WHAT to find out, not HOW (tool choice is the executor's job).
+  - Follow the Locate → Trace → Understand progression:
+      1. Locate: identify relevant files, modules, or entry-point functions.
+      2. Trace: follow call chains, data flow, or control flow from the located code.
+      3. Understand: read and interpret the detailed logic of key functions.
+  - Use the Codebase Context to ground your plan: reference concrete module paths, key functions, or architectural layers mentioned in the profile.
+  - If findings already cover some aspects, plan ONLY for the remaining gaps.
+  - Each task must specify goal, success_criteria, and abort_criteria.
+  - Optionally include suggested_tools and context_hint when the codebase profile provides clear signals.
+
+available_tools_summary: |-
+  - search: semantic + keyword hybrid search over indexed code
+  - read_file: read a specific source file by path
+  - list_files: list files in a directory
+  - related_code: find callers/callees via the call graph
 
 plan_examples: |-
-  Example: ["Search for class SearchTool", "Read the file containing SearchTool", "Find usages of the search method"]
+  Example 1 – Conceptual / flow question ("What happens when memory is swapped out?"):
+    tasks:
+      - goal: "Identify the entry-point functions that trigger swap-out"
+        success_criteria: "Found the top-level function(s) and their file locations"
+        abort_criteria: "After 3 search attempts, no relevant swap-related code is found"
+        suggested_tools: ["search"]
+        context_hint: "Codebase profile lists mm/vmscan.c and mm/swap.c as key modules"
+      - goal: "Trace the call chain from the swap-out entry point to the actual page write-back"
+        success_criteria: "Documented the call sequence with function names and file locations"
+        abort_criteria: "Call depth exceeds 5 levels — summarize the main path only"
+        suggested_tools: ["related_code", "read_file"]
+      - goal: "Understand the page selection and write-back logic in detail"
+        success_criteria: "Can explain the algorithm: how pages are chosen and written to disk"
+        abort_criteria: "Core function is longer than 200 lines — focus on the key decision points"
+        suggested_tools: ["read_file"]
+
+  Example 2 – Structural question ("What does the scheduler module do?"):
+    tasks:
+      - goal: "List the files and key symbols in the scheduler module"
+        success_criteria: "Have a file listing and the main public functions/structs"
+        abort_criteria: "No 'scheduler' directory or naming convention found after broad search"
+        suggested_tools: ["list_files", "search"]
+      - goal: "Understand the responsibilities of each major function"
+        success_criteria: "Can summarize what each key function does in one sentence"
+        abort_criteria: "Module contains more than 10 public functions — cover the top 5 by call frequency"
+        suggested_tools: ["read_file", "related_code"]
+
+  Example 3 – Relationship question ("How does the parser interact with the indexer?"):
+    tasks:
+      - goal: "Identify the interface between the parser and the indexer"
+        success_criteria: "Found the shared data types and the function(s) where parser output feeds into the indexer"
+        abort_criteria: "No direct dependency found — check for an intermediate adapter"
+        suggested_tools: ["search", "related_code"]
+      - goal: "Trace data flow from parser output to indexer storage"
+        success_criteria: "Documented the transformation steps the data undergoes"
+        abort_criteria: "Flow spans more than 4 modules — focus on the primary path"
+        suggested_tools: ["read_file", "related_code"]
+      - goal: "Identify error handling and edge cases at the boundary"
+        success_criteria: "Listed how parsing failures propagate to the indexer"
+        abort_criteria: "No explicit error handling exists — note this as a finding"
+        suggested_tools: ["read_file"]

@@ -1,5 +1,8 @@
+import json
 import logging
-from typing import Any, Dict
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List
 
 from langchain_core.messages import (
     AIMessage,
@@ -19,11 +22,14 @@ from agent.prompts import (
     EXECUTOR_PROMPT,
     REFINE_PROMPT,
     SYNTHESIZE_PROMPT,
+    Task,
     PlanOutput,
     RefineDecision,
 )
 
 logger = logging.getLogger(__name__)
+
+PLAN_LOG_DIR = Path("./logs/plans")
 
 
 # -- Helper ------------------------------------------------------------------
@@ -34,10 +40,54 @@ def _format_findings(findings: Dict[str, Any], max_len: int = 200) -> str:
     )
 
 
+def _save_plan_log(
+    query: str,
+    tasks: List[Dict[str, Any]],
+    iteration: int,
+    codebase_ctx: str,
+) -> Path:
+    """Persist the generated plan to a JSON file for observability."""
+    PLAN_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = PLAN_LOG_DIR / f"plan_{timestamp}_iter{iteration}.json"
+
+    log_data = {
+        "timestamp": timestamp,
+        "iteration": iteration,
+        "query": query,
+        "tasks": tasks,
+        "codebase_context_length": len(codebase_ctx),
+    }
+
+    with open(log_path, "w", encoding="utf-8") as f:
+        json.dump(log_data, f, indent=2, ensure_ascii=False)
+
+    logger.info(f"Plan saved to {log_path}")
+    return log_path
+
+
+def _task_to_dict(task: Task) -> Dict[str, Any]:
+    """Convert a Task pydantic model to a plain dict for state storage."""
+    return task.model_dump(exclude_none=True)
+
+
+def _get_current_task(state: AgentState) -> Dict[str, Any]:
+    """Get the current task dict from state, with safe defaults."""
+    plan = state.get("plan", [])
+    idx = state.get("current_step", 0)
+    if not plan or idx >= len(plan):
+        return {
+            "goal": "No more tasks to execute",
+            "success_criteria": "N/A",
+            "abort_criteria": "N/A",
+        }
+    return plan[idx]
+
+
 # -- Nodes -------------------------------------------------------------------
 
 def plan_node(state: AgentState) -> Dict[str, Any]:
-    """Create or update the research plan based on user input and existing findings."""
+    """Create a structured research plan based on user input and codebase profile."""
     logger.info("--- PLANNING ---")
     model = get_model()
 
@@ -51,44 +101,53 @@ def plan_node(state: AgentState) -> Dict[str, Any]:
 
     chain = PLAN_PROMPT | model.with_structured_output(PlanOutput)
 
+    fallback_task = Task(
+        goal="Search for relevant code related to the query",
+        success_criteria="Found at least one relevant code snippet",
+        abort_criteria="No results after 2 search attempts",
+    )
+
     try:
         result = chain.invoke({
             "input": state["input"],
             "findings": findings_str,
             "codebase_context": codebase_ctx,
         })
-        plan = result.steps
-        if not plan:
-            plan = ["Search for relevant code related to the query"]
-        logger.info(f"Generated plan with {len(plan)} steps: {plan}")
+        tasks = result.tasks
+        if not tasks:
+            tasks = [fallback_task]
+        logger.info(f"Generated plan with {len(tasks)} tasks:")
+        for i, t in enumerate(tasks):
+            logger.info(f"  Task {i+1}: {t.goal}")
     except Exception as e:
-        plan = ["Search for relevant code related to the query"]
+        tasks = [fallback_task]
         logger.warning(f"Plan generation failed: {e}")
 
+    task_dicts = [_task_to_dict(t) for t in tasks]
+
+    # Save plan for observability
+    _save_plan_log(state["input"], task_dicts, iteration, codebase_ctx)
+
     return {
-        "plan": plan,
+        "plan": task_dicts,
         "current_step": 0,
         "iteration_count": iteration + 1,
     }
 
 
 def setup_executor(state: AgentState) -> Dict[str, Any]:
-    """Initialize messages for the executor LLM ↔ ToolNode loop.
+    """Initialize messages for the executor LLM / ToolNode loop.
 
     Clears previous messages via RemoveMessage, then seeds with
     SystemMessage (task context) and HumanMessage (task instruction).
     """
     logger.info("--- SETUP EXECUTOR ---")
 
-    current_step_idx = state.get("current_step", 0)
+    task = _get_current_task(state)
     plan = state.get("plan", [])
+    idx = state.get("current_step", 0)
 
-    if not plan or current_step_idx >= len(plan):
-        current_step_desc = "No more steps to execute"
-    else:
-        current_step_desc = plan[current_step_idx]
-
-    logger.info(f"Step {current_step_idx + 1}/{len(plan)}: {current_step_desc}")
+    logger.info(f"Task {idx + 1}/{len(plan)}: {task['goal']}")
 
     findings_str = _format_findings(state.get("findings", {}), max_len=150)
 
@@ -97,7 +156,11 @@ def setup_executor(state: AgentState) -> Dict[str, Any]:
 
     # Build fresh messages from prompt template
     formatted = EXECUTOR_PROMPT.format_messages(
-        current_step=current_step_desc,
+        task_goal=task["goal"],
+        task_success_criteria=task["success_criteria"],
+        task_abort_criteria=task["abort_criteria"],
+        task_suggested_tools=", ".join(task.get("suggested_tools", [])) or "none specified",
+        task_context_hint=task.get("context_hint") or "none",
         findings=findings_str,
     )
     sys_msg = formatted[0]
@@ -153,14 +216,13 @@ def aggregate_node(state: AgentState) -> Dict[str, Any]:
     """Extract findings from tool messages and advance current_step.
 
     Collects content from ToolMessage entries and the final AIMessage summary,
-    stores them in findings, then clears messages.
+    stores them in findings keyed by task goal, then clears messages.
     """
     logger.info("--- AGGREGATE ---")
 
     messages = state.get("messages", [])
+    task = _get_current_task(state)
     current_step_idx = state.get("current_step", 0)
-    plan = state.get("plan", [])
-    current_step_desc = plan[current_step_idx] if current_step_idx < len(plan) else "unknown"
 
     # Collect tool results and the final AI summary
     parts = []
@@ -171,7 +233,7 @@ def aggregate_node(state: AgentState) -> Dict[str, Any]:
             parts.append(msg.content)
 
     combined = "\n---\n".join(parts) if parts else "No results found"
-    finding_key = f"step_{current_step_idx}: {current_step_desc}"
+    finding_key = f"task_{current_step_idx}: {task['goal']}"
 
     old_findings = dict(state.get("findings", {}))
     old_findings[finding_key] = combined
