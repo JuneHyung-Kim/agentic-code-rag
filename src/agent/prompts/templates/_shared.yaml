@@ -9,24 +9,18 @@ planning_guidelines: |-
   - Each task must specify goal, success_criteria, and abort_criteria.
   - Optionally include suggested_tools and context_hint when the codebase profile provides clear signals.
 
-available_tools_summary: |-
-  - search: semantic + keyword hybrid search over indexed code
-  - read_file: read a specific source file by path
-  - list_files: list files in a directory
-  - related_code: find callers/callees via the call graph
-
 plan_examples: |-
   Example 1 – Conceptual / flow question ("What happens when memory is swapped out?"):
     tasks:
       - goal: "Identify the entry-point functions that trigger swap-out"
         success_criteria: "Found the top-level function(s) and their file locations"
         abort_criteria: "After 3 search attempts, no relevant swap-related code is found"
-        suggested_tools: ["search"]
+        suggested_tools: ["search_codebase", "grep_codebase"]
         context_hint: "Codebase profile lists mm/vmscan.c and mm/swap.c as key modules"
       - goal: "Trace the call chain from the swap-out entry point to the actual page write-back"
         success_criteria: "Documented the call sequence with function names and file locations"
         abort_criteria: "Call depth exceeds 5 levels — summarize the main path only"
-        suggested_tools: ["related_code", "read_file"]
+        suggested_tools: ["get_call_chain", "get_callees", "read_file"]
       - goal: "Understand the page selection and write-back logic in detail"
         success_criteria: "Can explain the algorithm: how pages are chosen and written to disk"
         abort_criteria: "Core function is longer than 200 lines — focus on the key decision points"
@@ -37,23 +31,23 @@ plan_examples: |-
       - goal: "List the files and key symbols in the scheduler module"
         success_criteria: "Have a file listing and the main public functions/structs"
         abort_criteria: "No 'scheduler' directory or naming convention found after broad search"
-        suggested_tools: ["list_files", "search"]
+        suggested_tools: ["find_files", "get_module_summary", "list_directory"]
       - goal: "Understand the responsibilities of each major function"
         success_criteria: "Can summarize what each key function does in one sentence"
         abort_criteria: "Module contains more than 10 public functions — cover the top 5 by call frequency"
-        suggested_tools: ["read_file", "related_code"]
+        suggested_tools: ["read_file", "get_callers", "get_callees"]
 
   Example 3 – Relationship question ("How does the parser interact with the indexer?"):
     tasks:
       - goal: "Identify the interface between the parser and the indexer"
         success_criteria: "Found the shared data types and the function(s) where parser output feeds into the indexer"
         abort_criteria: "No direct dependency found — check for an intermediate adapter"
-        suggested_tools: ["search", "related_code"]
+        suggested_tools: ["search_codebase", "grep_codebase", "get_callers"]
       - goal: "Trace data flow from parser output to indexer storage"
         success_criteria: "Documented the transformation steps the data undergoes"
         abort_criteria: "Flow spans more than 4 modules — focus on the primary path"
-        suggested_tools: ["read_file", "related_code"]
+        suggested_tools: ["read_file", "get_call_chain"]
       - goal: "Identify error handling and edge cases at the boundary"
         success_criteria: "Listed how parsing failures propagate to the indexer"
         abort_criteria: "No explicit error handling exists — note this as a finding"
-        suggested_tools: ["read_file"]
+        suggested_tools: ["read_file", "grep_codebase"]

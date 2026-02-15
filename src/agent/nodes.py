@@ -17,6 +17,7 @@ from langchain_core.output_parsers import StrOutputParser
 from config import config
 from agent.state import AgentState, empty_working_memory
 from agent.model import get_model, get_model_with_tools
+from agent.tools import get_tools
 from profiling.profile_store import get_codebase_context
 from agent.prompts import (
     PLAN_PROMPT,
@@ -158,6 +159,16 @@ def _task_to_dict(task: Task) -> Dict[str, Any]:
     return task.model_dump(exclude_none=True)
 
 
+def _build_tools_summary() -> str:
+    """Build a tool summary string from the live tool registry."""
+    lines = []
+    for t in get_tools():
+        # First sentence of description is enough for the planner
+        desc = t.description.split("\n")[0].strip()
+        lines.append(f"- {t.name}: {desc}")
+    return "\n".join(lines)
+
+
 def _get_current_task(state: AgentState) -> Dict[str, Any]:
     """Get the current task dict from state, with safe defaults."""
     plan = state.get("plan", [])
@@ -228,11 +239,14 @@ def plan_node(state: AgentState) -> Dict[str, Any]:
         abort_criteria="No results after 2 search attempts",
     )
 
+    tools_summary = _build_tools_summary()
+
     try:
         result = chain.invoke({
             "input": state["input"],
             "working_memory": wm_str,
             "codebase_context": codebase_ctx,
+            "available_tools_summary": tools_summary,
         })
         tasks = result.tasks
         if not tasks:
