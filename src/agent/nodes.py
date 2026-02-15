@@ -23,6 +23,7 @@ from agent.prompts import (
     EXECUTOR_PROMPT,
     REFINE_PROMPT,
     SYNTHESIZE_PROMPT,
+    AGGREGATE_PROMPT,
     Task,
     PlanOutput,
     RefineDecision,
@@ -76,7 +77,7 @@ def _format_working_memory(wm: Dict[str, Any], max_entities: int = 20) -> str:
     if task_results:
         parts.append("Completed tasks:")
         for tr in task_results:
-            parts.append(f"  - [{tr.get('task', '?')}]: {tr.get('summary', '')[:150]}")
+            parts.append(f"  - [{tr.get('task', '?')}]: {tr.get('summary', '')}")
 
     return "\n".join(parts) if parts else "No findings yet."
 
@@ -373,11 +374,27 @@ def aggregate_node(state: AgentState) -> Dict[str, Any]:
 
     combined = "\n---\n".join(text_parts) if text_parts else "No results found"
 
+    # Summarize findings via LLM
+    if combined != "No results found":
+        try:
+            model = get_model()
+            chain = AGGREGATE_PROMPT | model | StrOutputParser()
+            summary = chain.invoke({
+                "task_goal": task["goal"],
+                "success_criteria": task["success_criteria"],
+                "findings_text": combined,
+            })
+        except Exception as e:
+            logger.warning(f"Aggregate LLM summarization failed: {e}")
+            summary = combined
+    else:
+        summary = combined
+
     # Record task result
     wm["task_results"].append({
         "task": task["goal"],
         "step_index": current_step_idx,
-        "summary": combined,
+        "summary": summary,
     })
 
     logger.info(

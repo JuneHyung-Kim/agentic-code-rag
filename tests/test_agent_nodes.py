@@ -352,8 +352,12 @@ class TestRouteExecutor:
 
 class TestAggregateNode:
 
-    def test_collect_findings_from_tool_messages(self):
+    @patch("agent.nodes.get_model")
+    def test_collect_findings_from_tool_messages(self, mock_get_model):
         """aggregate_node should build working_memory from ToolMessage artifacts."""
+        ai_msg = AIMessage(content="Summary: Found class Foo in file.py, a utility class")
+        mock_get_model.return_value = _mock_model_returning(ai_msg)
+
         msgs = [
             SystemMessage(content="context", id="sys1"),
             HumanMessage(content="task", id="h1"),
@@ -388,14 +392,19 @@ class TestAggregateNode:
         assert wm["discovered_entities"][0]["name"] == "file.py"
         assert len(wm["task_results"]) == 1
         assert wm["task_results"][0]["task"] == "Search for Foo"
+        # Summary comes from LLM now
         assert "Found class Foo" in wm["task_results"][0]["summary"]
         assert result["current_step"] == 1
         # AI summary should become an insight
         assert len(wm["insights"]) == 1
         assert "Foo is a utility class" in wm["insights"][0]
 
-    def test_increment_current_step(self):
+    @patch("agent.nodes.get_model")
+    def test_increment_current_step(self, mock_get_model):
         """aggregate_node should advance current_step by 1."""
+        ai_msg = AIMessage(content="done summary")
+        mock_get_model.return_value = _mock_model_returning(ai_msg)
+
         state = _make_state(
             messages=[AIMessage(content="done", id="a1")],
             plan=[_make_task("s1"), _make_task("s2"), _make_task("s3")],
@@ -404,8 +413,12 @@ class TestAggregateNode:
         result = aggregate_node(state)
         assert result["current_step"] == 2
 
-    def test_clear_messages(self):
+    @patch("agent.nodes.get_model")
+    def test_clear_messages(self, mock_get_model):
         """aggregate_node should emit RemoveMessage for all messages."""
+        ai_msg = AIMessage(content="summarized")
+        mock_get_model.return_value = _mock_model_returning(ai_msg)
+
         msgs = [
             HumanMessage(content="task", id="h1"),
             AIMessage(content="result", id="a1"),
@@ -416,8 +429,12 @@ class TestAggregateNode:
         remove_msgs = [m for m in result["messages"] if isinstance(m, RemoveMessage)]
         assert len(remove_msgs) == 2
 
-    def test_dedup_entities(self):
+    @patch("agent.nodes.get_model")
+    def test_dedup_entities(self, mock_get_model):
         """aggregate_node should deduplicate entities by name across tool calls."""
+        ai_msg = AIMessage(content="Found Foo class")
+        mock_get_model.return_value = _mock_model_returning(ai_msg)
+
         msgs = [
             ToolMessage(
                 content="Found Foo",
@@ -442,8 +459,12 @@ class TestAggregateNode:
         result = aggregate_node(state)
         assert len(result["working_memory"]["discovered_entities"]) == 1
 
-    def test_merge_relationships(self):
+    @patch("agent.nodes.get_model")
+    def test_merge_relationships(self, mock_get_model):
         """aggregate_node should merge relationships from multiple tool calls."""
+        ai_msg = AIMessage(content="Bar calls Foo, Foo calls Baz")
+        mock_get_model.return_value = _mock_model_returning(ai_msg)
+
         msgs = [
             ToolMessage(
                 content="callers of Foo",
@@ -470,8 +491,12 @@ class TestAggregateNode:
         assert len(wm["discovered_entities"]) == 2
         assert len(wm["relationships"]) == 2
 
-    def test_accumulate_across_tasks(self):
+    @patch("agent.nodes.get_model")
+    def test_accumulate_across_tasks(self, mock_get_model):
         """aggregate_node should preserve entities from previous tasks."""
+        ai_msg = AIMessage(content="Found NewEntity in new.py")
+        mock_get_model.return_value = _mock_model_returning(ai_msg)
+
         existing_wm = empty_working_memory()
         existing_wm["discovered_entities"] = [{"name": "OldEntity", "type": "class", "location": "old.py"}]
         existing_wm["task_results"] = [{"task": "prev task", "step_index": 0, "summary": "found old"}]
@@ -498,8 +523,12 @@ class TestAggregateNode:
         assert len(wm["discovered_entities"]) == 2
         assert len(wm["task_results"]) == 2
 
-    def test_no_artifact_graceful(self):
+    @patch("agent.nodes.get_model")
+    def test_no_artifact_graceful(self, mock_get_model):
         """aggregate_node should handle ToolMessages without artifacts."""
+        ai_msg = AIMessage(content="Some text result summarized")
+        mock_get_model.return_value = _mock_model_returning(ai_msg)
+
         msgs = [
             ToolMessage(content="Some text result", tool_call_id="tc1", id="tm1"),
             AIMessage(content="Summary", id="ai1"),
@@ -508,7 +537,35 @@ class TestAggregateNode:
         result = aggregate_node(state)
         wm = result["working_memory"]
         assert len(wm["task_results"]) == 1
-        assert "Some text result" in wm["task_results"][0]["summary"]
+        # Summary now comes from LLM
+        assert len(wm["task_results"][0]["summary"]) > 0
+
+    @patch("agent.nodes.get_model")
+    def test_llm_failure_falls_back_to_raw(self, mock_get_model):
+        """aggregate_node should fall back to raw concat if LLM fails."""
+        mock_model = MagicMock()
+        mock_model.return_value = None
+        mock_model.invoke.side_effect = Exception("API error")
+        mock_get_model.return_value = mock_model
+
+        msgs = [
+            ToolMessage(content="Raw finding text", tool_call_id="tc1", id="tm1"),
+        ]
+        state = _make_state(messages=msgs, plan=[_make_task()])
+        result = aggregate_node(state)
+        wm = result["working_memory"]
+        assert "Raw finding text" in wm["task_results"][0]["summary"]
+
+    def test_no_results_skips_llm(self):
+        """aggregate_node should not call LLM when there are no findings."""
+        state = _make_state(
+            messages=[SystemMessage(content="ctx", id="s1")],
+            plan=[_make_task()],
+        )
+        with patch("agent.nodes.get_model") as mock_get_model:
+            result = aggregate_node(state)
+            mock_get_model.assert_not_called()
+        assert result["working_memory"]["task_results"][0]["summary"] == "No results found"
 
 
 # ---------------------------------------------------------------------------
