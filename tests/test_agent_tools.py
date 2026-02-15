@@ -10,6 +10,8 @@ from agent.tools import get_tools, reset_tools
 EXPECTED_TOOL_NAMES = {
     "search_codebase",
     "read_file",
+    "find_files",
+    "grep_codebase",
     "list_directory",
     "get_callers",
     "get_callees",
@@ -24,7 +26,7 @@ class TestToolRegistration:
 
     def test_get_tools_returns_five_tools(self):
         tools = get_tools()
-        assert len(tools) == 8
+        assert len(tools) == 10
 
     def test_tool_names(self):
         tools = get_tools()
@@ -47,5 +49,5 @@ class TestToolRegistration:
         reset_tools()
         # After reset, get_tools() should still work (recreates singletons lazily)
         tools = get_tools()
-        assert len(tools) == 8
+        assert len(tools) == 10
         reset_tools()  # clean up

@@ -9,12 +9,14 @@ with entities and relationships for working memory extraction.
 """
 
 import logging
+import os
 import re
 from typing import Any, Dict, List, Tuple
 
 from langchain_core.tools import BaseTool, tool
 
 from config import config
+from tools.grep_tool import GrepTool
 from tools.search_tool import SearchTool
 from tools.structure import FileSystemTools
 from tools.related import RelatedCodeTool
@@ -43,6 +45,12 @@ def _get_related_tool() -> RelatedCodeTool:
     if "related" not in _instances:
         _instances["related"] = RelatedCodeTool()
     return _instances["related"]
+
+
+def _get_grep_tool() -> GrepTool:
+    if "grep" not in _instances:
+        _instances["grep"] = GrepTool(config.project_root)
+    return _instances["grep"]
 
 
 def _get_symbol_tool() -> SymbolTool:
@@ -150,6 +158,31 @@ def _parse_call_chain_relationships(text: str) -> Tuple[List[Dict], List[Dict]]:
     return entities, relationships
 
 
+def _parse_find_entities(text: str) -> List[Dict[str, str]]:
+    """Extract file entities from find_files output."""
+    entities = []
+    for line in text.splitlines():
+        line = line.strip()
+        # Skip header and empty lines
+        if not line or line.startswith("Found ") or line.startswith("No files"):
+            continue
+        entities.append({"name": os.path.basename(line), "type": "file", "location": line})
+    return entities
+
+
+def _parse_grep_entities(text: str) -> List[Dict[str, str]]:
+    """Extract file entities from grep output."""
+    entities = []
+    seen = set()
+    # Pattern: [N] path/to/file.py:123
+    for match in re.finditer(r"\[\d+\]\s+(\S+?):(\d+)", text):
+        file_path = match.group(1)
+        if file_path not in seen:
+            seen.add(file_path)
+            entities.append({"name": os.path.basename(file_path), "type": "file", "location": file_path})
+    return entities
+
+
 def _parse_module_entities(text: str) -> List[Dict[str, str]]:
     """Extract entity dicts from module summary text."""
     entities = []
@@ -183,10 +216,35 @@ def search_codebase(query: str, n_results: int = 5) -> Tuple[str, dict]:
 
 
 @tool(response_format="content_and_artifact")
-def read_file(file_path: str) -> Tuple[str, dict]:
-    """Read the contents of a specific file. Use when you know the exact file path."""
-    text = _get_fs_tool().read_file(file_path)
+def read_file(file_path: str, start_line: int = 1, end_line: int = 0) -> Tuple[str, dict]:
+    """Read the contents of a specific file. Use when you know the exact file path.
+    Optionally specify start_line and end_line to read a specific range of lines.
+    end_line=0 (default) reads to the end of the file."""
+    text = _get_fs_tool().read_file(file_path, start_line=start_line, end_line=end_line)
     return text, _empty_artifact()
+
+
+@tool(response_format="content_and_artifact")
+def find_files(pattern: str, path: str = ".", max_results: int = 50) -> Tuple[str, dict]:
+    """Find files matching a glob pattern recursively (e.g. '*.py', 'test_*.c').
+    Use to locate files by name pattern when you don't know the exact path."""
+    text = _get_fs_tool().find_files(pattern, path=path, max_results=max_results)
+    entities = _parse_find_entities(text)
+    return text, {"entities": entities, "relationships": []}
+
+
+@tool(response_format="content_and_artifact")
+def grep_codebase(
+    pattern: str, max_results: int = 30, context_lines: int = 1, glob_filter: str = ""
+) -> Tuple[str, dict]:
+    """Search for a regex pattern across all project files.
+    Use to find usages, definitions, or any text pattern in the codebase.
+    glob_filter narrows to specific file types (e.g. '*.py')."""
+    text = _get_grep_tool().grep(
+        pattern, max_results=max_results, context_lines=context_lines, glob_filter=glob_filter
+    )
+    entities = _parse_grep_entities(text)
+    return text, {"entities": entities, "relationships": []}
 
 
 @tool(response_format="content_and_artifact")
@@ -260,6 +318,8 @@ def get_tools() -> List[BaseTool]:
     return [
         search_codebase,
         read_file,
+        find_files,
+        grep_codebase,
         list_directory,
         get_callers,
         get_callees,

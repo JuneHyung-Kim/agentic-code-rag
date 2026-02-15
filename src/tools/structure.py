@@ -1,5 +1,9 @@
+import fnmatch
 import os
 from typing import Dict, Any, List
+
+SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", "build", "dist", ".tox", ".mypy_cache", ".pytest_cache", "db"}
+
 
 class FileSystemTools:
     """
@@ -24,7 +28,7 @@ class FileSystemTools:
         except Exception as e:
             return f"Error: {e}"
 
-    def read_file(self, file_path: str, start_line: int = 1, end_line: int = None) -> str:
+    def read_file(self, file_path: str, start_line: int = 1, end_line: int = 0) -> str:
         """
         Read content of a file.
         """
@@ -37,7 +41,34 @@ class FileSystemTools:
             with open(target_path, 'r', encoding='utf-8', errors='replace') as f:
                 lines = f.readlines()
             
-            if end_line is None: end_line = len(lines)
+            if end_line <= 0: end_line = len(lines)
             return "".join(lines[start_line-1:end_line])
+        except Exception as e:
+            return f"Error: {e}"
+
+    def find_files(self, pattern: str, path: str = ".", max_results: int = 50) -> str:
+        """Find files matching a glob pattern (e.g. '*.py', 'test_*.c') recursively."""
+        try:
+            base = os.path.abspath(os.path.join(self.project_root, path))
+            if not base.startswith(self.project_root):
+                return "Error: Access denied."
+
+            matches: List[str] = []
+            for root, dirs, files in os.walk(base):
+                dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+                for fname in files:
+                    if fnmatch.fnmatch(fname, pattern):
+                        full = os.path.join(root, fname)
+                        rel = os.path.relpath(full, self.project_root)
+                        matches.append(rel)
+                        if len(matches) >= max_results:
+                            break
+                if len(matches) >= max_results:
+                    break
+
+            if not matches:
+                return f"No files matching '{pattern}' found."
+            header = f"Found {len(matches)} file(s) matching '{pattern}':\n"
+            return header + "\n".join(matches)
         except Exception as e:
             return f"Error: {e}"
