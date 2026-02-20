@@ -1,5 +1,6 @@
 import logging
 
+from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 
@@ -61,6 +62,12 @@ def get_model():
             temperature=0,
             convert_system_message_to_human=True,
         )
+    elif config.chat_provider == "claude":
+        _model_instance = ChatAnthropic(
+            model=config.chat_model,
+            api_key=config.anthropic_api_key,
+            temperature=0,
+        )
     elif config.chat_provider == "ollama":
         _model_instance = ChatOllama(
             base_url=config.ollama_base_url,
@@ -70,7 +77,7 @@ def get_model():
     else:
         raise ValueError(
             f"Unsupported chat provider: {config.chat_provider}. "
-            "Must be 'gemini' or 'ollama'."
+            "Must be 'gemini', 'claude', or 'ollama'."
         )
 
     if config.confirm_api_calls:

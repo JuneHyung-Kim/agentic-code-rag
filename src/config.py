@@ -9,6 +9,7 @@ class AgentConfig:
     def __init__(self):
         # API Keys
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
+        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         
         # Embedding Model Configuration
         self.embedding_provider = os.getenv("EMBEDDING_PROVIDER", "default")  # openai, gemini, default, ollama
@@ -49,13 +50,16 @@ class AgentConfig:
     
     def validate_chat_config(self) -> None:
         """Validate chat configuration."""
-        if self.chat_provider not in ["gemini", "ollama"]:
+        if self.chat_provider not in ["gemini", "ollama", "claude"]:
             raise ValueError(
                 f"Invalid CHAT_PROVIDER: {self.chat_provider}. "
-                f"Must be one of: gemini, ollama"
+                f"Must be one of: gemini, ollama, claude"
             )
 
         if self.chat_provider == "gemini" and not self.gemini_api_key:
             raise ValueError("CHAT_PROVIDER is 'gemini' but GEMINI_API_KEY is not set")
+
+        if self.chat_provider == "claude" and not self.anthropic_api_key:
+            raise ValueError("CHAT_PROVIDER is 'claude' but ANTHROPIC_API_KEY is not set")
 
 config = AgentConfig()
