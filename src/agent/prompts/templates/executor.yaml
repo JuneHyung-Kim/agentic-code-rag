@@ -11,12 +11,20 @@ messages:
         Suggested Tools: {task_suggested_tools}
         Context Hint: {task_context_hint}
 
+      Codebase structure:
+      {codebase_static_context}
+
+      Files pre-selected for this task:
+      {relevant_modules}
+
       Working memory from earlier tasks:
       {working_memory}
 
       Instructions:
       - Focus on achieving the goal. Use the success criteria to know when you are done.
       - If you hit the abort criteria, stop and summarize what you found so far.
+      - START with the pre-selected files above: use read_file or get_symbol_definition directly with the exact paths listed.
+      - The full file list in "Codebase structure" tells you what files exist — use list_directory or find_files only when you need to explore paths not already listed.
       - You decide WHICH tools to call and HOW to query them. The suggested tools are hints, not mandates.
       - When you have gathered enough information, stop calling tools and provide a clear summary of your findings.
   - role: user

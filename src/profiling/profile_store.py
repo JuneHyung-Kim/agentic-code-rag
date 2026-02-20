@@ -12,6 +12,9 @@ _DEFAULT_PERSIST_PATH = "./db"
 _profile_cache: Optional[str] = None  # cached prompt context string
 _cache_loaded: bool = False
 
+_profile_obj_cache: Optional[CodebaseProfile] = None  # cached profile object
+_profile_obj_loaded: bool = False
+
 
 def save_profile(profile: CodebaseProfile, persist_path: str = _DEFAULT_PERSIST_PATH) -> None:
     """Write profile as JSON and Markdown to persist_path."""
@@ -53,6 +56,17 @@ def load_prompt_context(persist_path: str = _DEFAULT_PERSIST_PATH) -> Optional[s
     return render_prompt_context(profile)
 
 
+def get_profile(persist_path: str = _DEFAULT_PERSIST_PATH) -> Optional[CodebaseProfile]:
+    """Singleton-cached profile object for structured access (e.g. renderer functions)."""
+    global _profile_obj_cache, _profile_obj_loaded
+    if _profile_obj_loaded:
+        return _profile_obj_cache
+
+    _profile_obj_cache = load_profile(persist_path)
+    _profile_obj_loaded = True
+    return _profile_obj_cache
+
+
 def get_codebase_context(persist_path: str = _DEFAULT_PERSIST_PATH) -> Optional[str]:
     """Singleton-cached prompt context for injection into agent nodes."""
     global _profile_cache, _cache_loaded
@@ -66,6 +80,8 @@ def get_codebase_context(persist_path: str = _DEFAULT_PERSIST_PATH) -> Optional[
 
 def reset_profile_cache() -> None:
     """Clear the singleton cache. Call after re-init or for testing."""
-    global _profile_cache, _cache_loaded
+    global _profile_cache, _cache_loaded, _profile_obj_cache, _profile_obj_loaded
     _profile_cache = None
     _cache_loaded = False
+    _profile_obj_cache = None
+    _profile_obj_loaded = False

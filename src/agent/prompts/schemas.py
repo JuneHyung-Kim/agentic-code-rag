@@ -34,3 +34,15 @@ class RefineDecision(BaseModel):
         description="Whether to continue research or finish"
     )
     reason: str = Field(description="Brief explanation for the decision")
+
+
+class FileSelectionOutput(BaseModel):
+    """Output schema for the file-selection pre-flight in setup_executor."""
+
+    files: List[str] = Field(
+        description=(
+            "File paths most relevant to this task (max 5). "
+            "Use exact names from the module list. "
+            "Return an empty list if nothing is clearly relevant."
+        ),
+    )

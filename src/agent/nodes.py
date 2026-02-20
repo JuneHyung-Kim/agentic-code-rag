@@ -18,16 +18,23 @@ from config import config
 from agent.state import AgentState, empty_working_memory
 from agent.model import get_model, get_model_with_tools
 from agent.tools import get_tools
-from profiling.profile_store import get_codebase_context
+from profiling.profile_store import get_codebase_context, get_profile
+from profiling.renderer import (
+    render_executor_static_context,
+    render_file_selection_context,
+    render_selected_files_detail,
+)
 from agent.prompts import (
     PLAN_PROMPT,
     EXECUTOR_PROMPT,
     REFINE_PROMPT,
     SYNTHESIZE_PROMPT,
     AGGREGATE_PROMPT,
+    FILE_SELECTION_PROMPT,
     Task,
     PlanOutput,
     RefineDecision,
+    FileSelectionOutput,
 )
 
 logger = logging.getLogger(__name__)
@@ -270,11 +277,45 @@ def plan_node(state: AgentState) -> Dict[str, Any]:
     }
 
 
+def _select_relevant_files(task_goal: str, wm_str: str) -> List[str]:
+    """Phase 1: ask the LLM which files to investigate for this task.
+
+    Uses the module-map summaries and ai_summary as context so the LLM can
+    reason about file relevance without keyword matching. Returns an empty
+    list when no profile is available or on any error.
+    """
+    profile = get_profile()
+    if profile is None:
+        return []
+
+    ai_summary = profile.ai_summary or "No AI summary available."
+    file_sel_ctx = render_file_selection_context(profile)
+
+    try:
+        chain = FILE_SELECTION_PROMPT | get_model().with_structured_output(FileSelectionOutput)
+        result = chain.invoke({
+            "task_goal": task_goal,
+            "ai_summary": ai_summary,
+            "file_selection_context": file_sel_ctx,
+            "working_memory": wm_str,
+        })
+        selected = result.files or []
+        logger.info(f"  File selection: {selected}")
+        return selected
+    except Exception as e:
+        logger.warning(f"File selection LLM call failed: {e}")
+        return []
+
+
 def setup_executor(state: AgentState) -> Dict[str, Any]:
     """Initialize messages for the executor LLM / ToolNode loop.
 
-    Clears previous messages via RemoveMessage, then seeds with
-    SystemMessage (task context) and HumanMessage (task instruction).
+    Two-phase setup:
+      Phase 1 — LLM file selection: asks the model which files are relevant
+                 for the current task using module-map summaries.
+      Phase 2 — Prompt assembly: injects static codebase context (file list,
+                 key modules, graph stats) plus the selected files' details
+                 into the executor system message.
     """
     logger.info("--- SETUP EXECUTOR ---")
 
@@ -287,6 +328,22 @@ def setup_executor(state: AgentState) -> Dict[str, Any]:
     wm = state.get("working_memory", empty_working_memory())
     wm_str = _format_working_memory(wm)
 
+    # Phase 1: LLM file selection
+    selected_files = _select_relevant_files(task["goal"], wm_str)
+
+    # Phase 2: build codebase context sections
+    profile = get_profile()
+    if profile is not None:
+        static_ctx = render_executor_static_context(profile)
+        relevant_modules = (
+            render_selected_files_detail(profile, selected_files)
+            if selected_files
+            else "No specific files identified for this task."
+        )
+    else:
+        static_ctx = "No codebase profile available."
+        relevant_modules = "No codebase profile available."
+
     # Clear old messages
     remove_msgs = [RemoveMessage(id=m.id) for m in state.get("messages", []) if m.id]
 
@@ -297,6 +354,8 @@ def setup_executor(state: AgentState) -> Dict[str, Any]:
         task_abort_criteria=task["abort_criteria"],
         task_suggested_tools=", ".join(task.get("suggested_tools", [])) or "none specified",
         task_context_hint=task.get("context_hint") or "none",
+        codebase_static_context=static_ctx,
+        relevant_modules=relevant_modules,
         working_memory=wm_str,
     )
     sys_msg = formatted[0]

@@ -1,0 +1,20 @@
+messages:
+  - role: system
+    content: |-
+      You are selecting source files to investigate for a specific research task.
+
+      Codebase overview:
+      {ai_summary}
+
+      {file_selection_context}
+
+      Instructions:
+      - Return at most 5 file paths that are most directly relevant to the task goal.
+      - Use exact file names as listed above.
+      - Return an empty list if no file is clearly relevant — do not guess.
+  - role: user
+    content: |-
+      Task: {task_goal}
+
+      Already known (working memory):
+      {working_memory}

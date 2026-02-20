@@ -1,5 +1,7 @@
 """Markdown rendering for codebase profiles."""
 
+from typing import List
+
 from profiling.schema import CodebaseProfile, DirectoryNode
 
 
@@ -175,3 +177,115 @@ def render_prompt_context(profile: CodebaseProfile, max_length: int = 6000) -> s
     if len(result) > max_length:
         result = result[:max_length - 3] + "..."
     return result
+
+
+def _flatten_file_list(profile: CodebaseProfile) -> List[str]:
+    """Return all file paths as a flat list by walking the directory tree."""
+    def _walk(node: DirectoryNode, prefix: str) -> List[str]:
+        paths = []
+        for child in node.children:
+            path = f"{prefix}/{child.name}" if prefix else child.name
+            if child.type == "file":
+                paths.append(path)
+            else:
+                paths.extend(_walk(child, path))
+        return paths
+
+    if not profile.directory_tree:
+        return [fm.relative_path for fm in profile.module_map]
+    return _walk(profile.directory_tree, "")
+
+
+def render_executor_static_context(profile: CodebaseProfile) -> str:
+    """Render fixed codebase context always injected into the executor prompt.
+
+    Includes project root, full flat file list, key modules, and call-graph
+    highlights. Allows the executor to navigate files without list_directory
+    or find_files tool calls.
+    """
+    lines = [f"Project root: {profile.project_root}"]
+
+    # Full flat file list — lets executor skip list_directory/find_files
+    all_files = _flatten_file_list(profile)
+    if all_files:
+        lines.append(f"\nAll files ({len(all_files)}):")
+        lines.append("  " + ", ".join(all_files))
+
+    # Key modules
+    if profile.key_modules:
+        lines.append("\nKey modules (high-connectivity hubs):")
+        for km in profile.key_modules:
+            lines.append(
+                f"  {km.relative_path}: {km.symbol_count} symbols, "
+                f"in={km.total_in_degree}, out={km.total_out_degree} ({km.role})"
+            )
+
+    # Call-graph highlights
+    gs = profile.graph_stats
+    if gs.total_nodes > 0:
+        lines.append(f"\nCall graph: {gs.total_nodes} nodes, {gs.total_edges} edges")
+        if gs.most_called:
+            names = ", ".join(
+                f"{x['name']}({x['in_degree']})" for x in gs.most_called[:5]
+            )
+            lines.append(f"  Most called: {names}")
+        if gs.most_calling:
+            names = ", ".join(
+                f"{x['name']}({x['out_degree']})" for x in gs.most_calling[:5]
+            )
+            lines.append(f"  Most calling: {names}")
+
+    return "\n".join(lines)
+
+
+def render_file_selection_context(profile: CodebaseProfile) -> str:
+    """Render module-map information for the file-selection LLM call.
+
+    Files with a summary are listed as "path: summary".
+    Files without a summary are grouped into a separate name-only list so
+    the LLM can still reason about them from their filenames.
+    """
+    lines = []
+
+    with_summary = [(fm.relative_path, fm.summary) for fm in profile.module_map if fm.summary]
+    without_summary = [fm.relative_path for fm in profile.module_map if not fm.summary]
+
+    if with_summary:
+        lines.append("Module summaries:")
+        for path, summary in with_summary:
+            lines.append(f"- {path}: {summary}")
+
+    if without_summary:
+        lines.append("\nFiles (no summary — infer from filename):")
+        lines.append("  " + ", ".join(without_summary))
+
+    return "\n".join(lines)
+
+
+def render_selected_files_detail(
+    profile: CodebaseProfile, selected_files: List[str], max_symbols: int = 10
+) -> str:
+    """Render summary and key symbols for a list of selected file paths.
+
+    Used to inject task-specific file details into the executor prompt so
+    the executor can call read_file or get_symbol_definition directly without
+    needing a discovery step first.
+    """
+    file_map = {fm.relative_path: fm for fm in profile.module_map}
+    lines = []
+
+    for path in selected_files:
+        fm = file_map.get(path)
+        if fm is None:
+            # File exists in codebase but not in module_map (e.g. header)
+            lines.append(f"- {path}")
+            continue
+        summary = fm.summary or "(no summary)"
+        lines.append(f"- {fm.relative_path}: {summary}")
+        if fm.symbols:
+            sym_names = ", ".join(s.name for s in fm.symbols[:max_symbols])
+            if len(fm.symbols) > max_symbols:
+                sym_names += f", ... (+{len(fm.symbols) - max_symbols} more)"
+            lines.append(f"  Key symbols: {sym_names}")
+
+    return "\n".join(lines) if lines else ""
