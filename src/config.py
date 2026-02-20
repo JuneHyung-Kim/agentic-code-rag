@@ -24,7 +24,7 @@ class AgentConfig:
 
         # Agent loop configuration
         self.max_iterations = int(os.getenv("MAX_ITERATIONS", "10"))  # Max planner-executor-refinery cycles
-        self.max_executor_steps = int(os.getenv("MAX_EXECUTOR_STEPS", "10"))  # Max ReAct steps per execution
+        self.max_executor_steps = int(os.getenv("MAX_EXECUTOR_STEPS", "5"))  # Max ReAct steps per execution
 
         # Legacy support (deprecated but kept for backward compatibility)
         legacy_provider = os.getenv("MODEL_PROVIDER")

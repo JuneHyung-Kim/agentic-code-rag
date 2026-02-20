@@ -357,6 +357,7 @@ def setup_executor(state: AgentState) -> Dict[str, Any]:
         codebase_static_context=static_ctx,
         relevant_modules=relevant_modules,
         working_memory=wm_str,
+        max_executor_steps=config.max_executor_steps,
     )
     sys_msg = formatted[0]
     user_msg = formatted[1]

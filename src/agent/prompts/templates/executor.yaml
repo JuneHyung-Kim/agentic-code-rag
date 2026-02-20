@@ -20,12 +20,14 @@ messages:
       Working memory from earlier tasks:
       {working_memory}
 
+      Tool Budget: {max_executor_steps} calls total. Spend them deliberately.
+
       Instructions:
-      - Focus on achieving the goal. Use the success criteria to know when you are done.
-      - If you hit the abort criteria, stop and summarize what you found so far.
-      - START with the pre-selected files above: use read_file or get_symbol_definition directly with the exact paths listed.
-      - The full file list in "Codebase structure" tells you what files exist — use list_directory or find_files only when you need to explore paths not already listed.
+      - START with the pre-selected files above — call read_file or get_symbol_definition with the exact paths listed before anything else.
+      - Before each tool call, ask: "Is this answer already in the pre-selected files or working memory?" If yes, skip the call.
+      - After each tool call, ask: "Can I now satisfy the success criteria with what I have?" If yes, STOP and write your summary immediately.
+      - Use list_directory or find_files only for paths not already listed in "Codebase structure".
       - You decide WHICH tools to call and HOW to query them. The suggested tools are hints, not mandates.
-      - When you have gathered enough information, stop calling tools and provide a clear summary of your findings.
+      - If you hit the abort criteria OR run out of budget, stop and summarize what you found so far.
   - role: user
     content: "Execute this research task: {task_goal}"
