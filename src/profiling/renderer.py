@@ -199,9 +199,8 @@ def _flatten_file_list(profile: CodebaseProfile) -> List[str]:
 def render_executor_static_context(profile: CodebaseProfile) -> str:
     """Render fixed codebase context always injected into the executor prompt.
 
-    Includes project root, full flat file list, key modules, and call-graph
-    highlights. Allows the executor to navigate files without list_directory
-    or find_files tool calls.
+    Includes project root and full flat file list so the executor can navigate
+    files without list_directory or find_files tool calls.
     """
     lines = [f"Project root: {profile.project_root}"]
 
@@ -210,30 +209,6 @@ def render_executor_static_context(profile: CodebaseProfile) -> str:
     if all_files:
         lines.append(f"\nAll files ({len(all_files)}):")
         lines.append("  " + ", ".join(all_files))
-
-    # Key modules
-    if profile.key_modules:
-        lines.append("\nKey modules (high-connectivity hubs):")
-        for km in profile.key_modules:
-            lines.append(
-                f"  {km.relative_path}: {km.symbol_count} symbols, "
-                f"in={km.total_in_degree}, out={km.total_out_degree} ({km.role})"
-            )
-
-    # Call-graph highlights
-    gs = profile.graph_stats
-    if gs.total_nodes > 0:
-        lines.append(f"\nCall graph: {gs.total_nodes} nodes, {gs.total_edges} edges")
-        if gs.most_called:
-            names = ", ".join(
-                f"{x['name']}({x['in_degree']})" for x in gs.most_called[:5]
-            )
-            lines.append(f"  Most called: {names}")
-        if gs.most_calling:
-            names = ", ".join(
-                f"{x['name']}({x['out_degree']})" for x in gs.most_calling[:5]
-            )
-            lines.append(f"  Most calling: {names}")
 
     return "\n".join(lines)
 
